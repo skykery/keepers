@@ -11,6 +11,8 @@ step for that.
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-06-17
+
 ### Added
 - `VERSION` file as single source of truth for the app version. `setup.py`
   and `scripts/build_dmg.sh` read it; `scripts/bump.sh` writes it.
