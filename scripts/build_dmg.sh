@@ -21,8 +21,9 @@ cd "$(dirname "$0")/.."
 
 APP_NAME="Keepers"
 APP_BUNDLE="dist/${APP_NAME}.app"
-DMG_NAME="Keepers-1.2.0.dmg"
-PY="./venv/bin/python"
+VERSION="$(cat VERSION | tr -d '[:space:]')"
+DMG_NAME="${APP_NAME}-${VERSION}.dmg"
+PY="${PY:-./venv/bin/python}"
 
 echo "==> 1/5 Cleaning prior build"
 rm -rf build dist

@@ -14,7 +14,7 @@ from setuptools import setup
 
 APP = ["app.py"]
 APP_NAME = "Keepers"
-VERSION = "1.2.0"
+VERSION = (open(os.path.join(os.path.dirname(__file__), "VERSION")).read().strip())
 
 
 def collect_tree(src_root: str) -> list:

@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+Add new entries under **[Unreleased]**. `scripts/bump.sh` promotes that
+section to a dated version heading at release time — there is no manual
+step for that.
+
+## [Unreleased]
+
+### Added
+- `VERSION` file as single source of truth for the app version. `setup.py`
+  and `scripts/build_dmg.sh` read it; `scripts/bump.sh` writes it.
+- `scripts/bump.sh` — bumps the version, rewrites CHANGELOG, commits and
+  tags in one step.
+- `.github/workflows/release.yml` — tag-driven macOS build, signing,
+  notarization, and GitHub Release publishing.
+- `docs/RELEASING.md` — one-time signing setup and per-release flow.
+
+### Changed
+- Repository renamed Photo Culler → **Keepers**.
+- Relicensed MIT → AGPL-3.0.
+- Models are downloaded on first launch instead of bundled inside the
+  `.app`. Cuts the `.dmg` from ~2 GB to ~200 MB.
+- LAION and MediaPipe downloads are now pinned to SHA-256; mismatches
+  raise `ModelIntegrityError` and the partial file is deleted.
+
+### Fixed
+- Path traversal in seven `/api/...` endpoints (any route taking a
+  `<filename>`). New `_safe_filename()` guard rejects anything that
+  isn't a plain basename.
+- Flask `debug=True` is no longer the default in the dev launcher.
+  Opt in with `KEEPERS_DEBUG=1`.
+
 ## [1.2.0] - 2026-02-18
 
 ### Added
