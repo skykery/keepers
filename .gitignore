@@ -1,0 +1,53 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.venv/
+env/
+.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Dev tool caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.rtk/
+.cache/
+
+# Local Claude / planning notes
+CLAUDE.md
+PLAN.md
+telemetry-id
+
+# Local sample data (never commit photo libraries)
+originals/
+culled/
+22/
+.thumbnails/
+
+# Generated session state
+scores.json
+cull_state.json
+
+# Downloaded models (user-cached at runtime)
+resources/models/
+models/
+
+# macOS build artifacts
+build/
+dist/
+*.dmg
+*.app/
+*.pkg
