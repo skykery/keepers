@@ -10,49 +10,7 @@ Models are downloaded on first launch, not bundled.
 import os
 import sys
 
-# MediaPipe's libmediapipe.dylib ships without enough Mach-O headerpad for
-# py2app's @loader_path rewrite to fit, and macholib refuses to write past
-# low_offset. The bytes between the header and the first segment are page
-# alignment padding on macOS dylibs, so growing low_offset to absorb the
-# overflow is safe in practice. Without this patch py2app aborts with
-# "New Mach-O header is too large to relocate ... delta=56".
-import macholib.MachO  # noqa: E402
-
-def _synchronize_size_allow_pad(self):
-    if self.total_size > self.low_offset:
-        self.low_offset = self.total_size
-
-macholib.MachO.MachOHeader.synchronize_size = _synchronize_size_allow_pad
-
-# py2app finishes by ad-hoc signing the bundle. That fails opaquely
-# ("Cannot sign bundle ...") whenever any nested binary rejects signing.
-# We don't need py2app's ad-hoc sign — build_dmg.sh follows up with a
-# real Developer ID sign. Replace it with a diagnostic shim that prints
-# codesign's actual stderr but doesn't abort the build.
-import subprocess as _subprocess  # noqa: E402
-import py2app.util  # noqa: E402
-
-def _diagnostic_codesign_adhoc(bundle):
-    cmd = [
-        "codesign", "-s", "-", "--all-architectures",
-        "--timestamp=none", "--force", "--deep", str(bundle),
-    ]
-    result = _subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        sep = "=" * 60
-        print(sep, flush=True)
-        print(
-            "py2app ad-hoc codesign FAILED "
-            "(ignored — build_dmg.sh will sign with Developer ID next):",
-            flush=True,
-        )
-        print(f"  exit: {result.returncode}", flush=True)
-        print(f"  stderr (head): {result.stderr[:4000]}", flush=True)
-        print(sep, flush=True)
-
-py2app.util.codesign_adhoc = _diagnostic_codesign_adhoc
-
-from setuptools import setup  # noqa: E402
+from setuptools import setup
 
 APP = ["app.py"]
 APP_NAME = "Keepers"
