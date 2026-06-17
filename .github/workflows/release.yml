@@ -4,6 +4,12 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Build + sign + notarize, but do not publish a GitHub Release"
+        type: boolean
+        default: true
 
 permissions:
   contents: write
@@ -15,13 +21,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Verify tag matches VERSION file
+      - name: Resolve version
         run: |
-          TAG_VERSION="${GITHUB_REF_NAME#v}"
           FILE_VERSION="$(tr -d '[:space:]' < VERSION)"
-          if [[ "$TAG_VERSION" != "$FILE_VERSION" ]]; then
-            echo "Tag $GITHUB_REF_NAME does not match VERSION file ($FILE_VERSION)." >&2
-            exit 1
+          if [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
+            TAG_VERSION="${GITHUB_REF_NAME#v}"
+            if [[ "$TAG_VERSION" != "$FILE_VERSION" ]]; then
+              echo "Tag $GITHUB_REF_NAME does not match VERSION file ($FILE_VERSION)." >&2
+              exit 1
+            fi
           fi
           echo "VERSION=$FILE_VERSION" >> "$GITHUB_ENV"
 
@@ -66,7 +74,16 @@ jobs:
           APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
         run: scripts/build_dmg.sh
 
+      - name: Upload dry-run artifact
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Keepers-${{ env.VERSION }}-dryrun
+          path: dist/Keepers-*.dmg
+          retention-days: 14
+
       - name: Extract release notes from CHANGELOG
+        if: github.event_name == 'push'
         run: |
           python3 - "$VERSION" > release-notes.md <<'PY'
           import re, sys
@@ -81,6 +98,7 @@ jobs:
           PY
 
       - name: Create GitHub Release
+        if: github.event_name == 'push'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
