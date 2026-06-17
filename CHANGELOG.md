@@ -11,6 +11,10 @@ step for that.
 
 ## [Unreleased]
 
+### Changed
+- Test files moved from the repo root into `tests/`. Run with
+  `python -m unittest discover -s tests`.
+
 ## [1.3.0] - 2026-06-17
 
 ### Added

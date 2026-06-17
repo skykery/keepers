@@ -70,7 +70,7 @@ Long answer with formulas, weights, and the bokeh / group-photo special cases: [
 ## Development
 
 ```bash
-./venv/bin/python -m unittest discover -v        # run tests
+./venv/bin/python -m unittest discover -s tests -v  # run tests
 ./venv/bin/python webapp.py                      # run as a browser app on :5000
 ./venv/bin/python app.py                         # run as the native window
 ```
