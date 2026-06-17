@@ -18,12 +18,9 @@ import sys
 # "New Mach-O header is too large to relocate ... delta=56".
 import macholib.MachO  # noqa: E402
 
-_orig_synchronize_size = macholib.MachO.MachOHeader.synchronize_size
-
 def _synchronize_size_allow_pad(self):
     if self.total_size > self.low_offset:
         self.low_offset = self.total_size
-    return _orig_synchronize_size(self)
 
 macholib.MachO.MachOHeader.synchronize_size = _synchronize_size_allow_pad
 
