@@ -10,7 +10,24 @@ Models are downloaded on first launch, not bundled.
 import os
 import sys
 
-from setuptools import setup
+# MediaPipe's libmediapipe.dylib ships without enough Mach-O headerpad for
+# py2app's @loader_path rewrite to fit, and macholib refuses to write past
+# low_offset. The bytes between the header and the first segment are page
+# alignment padding on macOS dylibs, so growing low_offset to absorb the
+# overflow is safe in practice. Without this patch py2app aborts with
+# "New Mach-O header is too large to relocate ... delta=56".
+import macholib.MachO  # noqa: E402
+
+_orig_synchronize_size = macholib.MachO.MachOHeader.synchronize_size
+
+def _synchronize_size_allow_pad(self):
+    if self.total_size > self.low_offset:
+        self.low_offset = self.total_size
+    return _orig_synchronize_size(self)
+
+macholib.MachO.MachOHeader.synchronize_size = _synchronize_size_allow_pad
+
+from setuptools import setup  # noqa: E402
 
 APP = ["app.py"]
 APP_NAME = "Keepers"

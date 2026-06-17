@@ -15,6 +15,12 @@ step for that.
 - Test files moved from the repo root into `tests/`. Run with
   `python -m unittest discover -s tests`.
 
+### Fixed
+- `setup.py` now monkey-patches macholib's `synchronize_size` so MediaPipe's
+  `libmediapipe.dylib` doesn't fail py2app with
+  "New Mach-O header is too large to relocate ... delta=56". The overflow
+  fits in page-alignment padding that the original check refuses to use.
+
 ## [1.3.0] - 2026-06-17
 
 ### Added
