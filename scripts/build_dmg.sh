@@ -28,6 +28,37 @@ PY="${PY:-./venv/bin/python}"
 echo "==> 1/5 Cleaning prior build"
 rm -rf build dist
 
+echo "==> 1.5/5 Pre-padding MediaPipe's libmediapipe.dylib headerpad"
+# py2app's macholib rewrite refuses to extend the Mach-O load command
+# section past `low_offset` (the file offset where the first segment
+# begins). MediaPipe's libmediapipe.dylib has a tiny headerpad and
+# py2app needs ~56 more bytes than it has room for.
+#
+# install_name_tool *can* extend load commands into headerpad reserved
+# at link time. If MediaPipe was linked with -headerpad_max_install_names
+# there's enough slack. If not, install_name_tool will refuse with the
+# same error class and we'll know we need a different bundler.
+MEDIAPIPE_DYLIB="$("$PY" -c 'import mediapipe, pathlib; print(pathlib.Path(mediapipe.__file__).parent / "tasks/c/libmediapipe.dylib")')"
+if [[ ! -f "$MEDIAPIPE_DYLIB" ]]; then
+    echo "ERROR: expected libmediapipe.dylib at $MEDIAPIPE_DYLIB but it isn't there." >&2
+    exit 1
+fi
+CURRENT_ID="$(otool -D "$MEDIAPIPE_DYLIB" | tail -n 1)"
+echo "    current LC_ID_DYLIB: $CURRENT_ID"
+PAD_ID="${CURRENT_ID}/__keepers_headerpad_filler_so_macholib_has_room_to_rewrite_install_names__"
+if ! install_name_tool -id "$PAD_ID" "$MEDIAPIPE_DYLIB" 2>install_name_tool.err; then
+    echo "----------------------------------------------------------------" >&2
+    echo "install_name_tool refused to extend the install name." >&2
+    cat install_name_tool.err >&2
+    echo "----------------------------------------------------------------" >&2
+    echo "libmediapipe.dylib was not linked with sufficient -headerpad." >&2
+    echo "Option A (pre-padding) is not viable — fall back to PyInstaller." >&2
+    exit 1
+fi
+rm -f install_name_tool.err
+install_name_tool -id "$CURRENT_ID" "$MEDIAPIPE_DYLIB"
+echo "    headerpad expanded; original install_name restored"
+
 echo "==> 2/5 Running py2app"
 "$PY" setup.py py2app
 
