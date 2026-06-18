@@ -17,7 +17,10 @@ permissions:
 jobs:
   build:
     runs-on: macos-14
-    timeout-minutes: 60
+    # Notarization is the bottleneck. Apple typically responds in 5-15 min,
+    # but the queue can stretch past an hour during peak load or on a team's
+    # first few submissions. Give it room before we cancel ourselves.
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
 
