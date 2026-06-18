@@ -12,14 +12,12 @@ step for that.
 ## [Unreleased]
 
 ### Changed
+- Switched the .app bundler from py2app to PyInstaller. py2app's macholib
+  refused to relocate MediaPipe's `libmediapipe.dylib` Mach-O header
+  ("delta=56" headerpad overflow), and no version pin or pre-pad worked
+  around it. `Keepers.spec` replaces `setup.py`.
 - Test files moved from the repo root into `tests/`. Run with
   `python -m unittest discover -s tests`.
-
-### Fixed
-- `setup.py` now monkey-patches macholib's `synchronize_size` so MediaPipe's
-  `libmediapipe.dylib` doesn't fail py2app with
-  "New Mach-O header is too large to relocate ... delta=56". The overflow
-  fits in page-alignment padding that the original check refuses to use.
 
 ## [1.3.0] - 2026-06-17
 

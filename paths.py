@@ -1,4 +1,4 @@
-"""Path resolver for dev vs frozen (py2app) builds.
+"""Path resolver for dev vs frozen (PyInstaller) builds.
 
 Templates ship inside the .app bundle when frozen.
 Model weights always live in a user-writable directory and are

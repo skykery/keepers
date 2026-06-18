@@ -1,6 +1,6 @@
 """macOS desktop launcher: Flask server + WKWebView window via pywebview.
 
-Used as the py2app entry point. Dev users can still run `webapp.py` directly for a browser-based session.
+Used as the PyInstaller entry point. Dev users can still run `webapp.py` directly for a browser-based session.
 """
 
 import socket

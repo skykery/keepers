@@ -19,7 +19,7 @@ git push --follow-tags
 ```
 
 Watch the workflow run on the Actions tab. A clean run takes ~25–35 minutes
-(most of that is `py2app` bundling PyTorch + notarization).
+(most of that is PyInstaller bundling PyTorch + notarization).
 
 ## One-time setup
 

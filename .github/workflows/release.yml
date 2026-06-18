@@ -46,13 +46,7 @@ jobs:
           python -m venv venv
           ./venv/bin/pip install --upgrade pip
           ./venv/bin/pip install -r requirements.txt
-          ./venv/bin/pip install py2app
-          # py2app pulls macholib>=1.16, whose strict synchronize_size check
-          # fails on libmediapipe.dylib's tiny headerpad. macholib 1.15.x
-          # had a more permissive check; downgrading after py2app installs
-          # leaves py2app working as long as it doesn't call 1.16-only APIs.
-          ./venv/bin/pip install --force-reinstall --no-deps 'macholib<1.16'
-          ./venv/bin/pip show macholib | grep Version
+          ./venv/bin/pip install 'pyinstaller>=6.0'
 
       - name: Import Developer ID certificate
         env:

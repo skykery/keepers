@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# End-to-end build: prefetch models → py2app → codesign → notarize → staple → .dmg.
+# End-to-end build: PyInstaller → codesign → notarize → staple → .dmg.
 #
 # Required env vars (set in your shell or a .env you source):
 #   DEVELOPER_ID         e.g. "Developer ID Application: Alin Banuta (TEAMID12345)"
@@ -28,8 +28,8 @@ PY="${PY:-./venv/bin/python}"
 echo "==> 1/5 Cleaning prior build"
 rm -rf build dist
 
-echo "==> 2/5 Running py2app"
-"$PY" setup.py py2app
+echo "==> 2/5 Running PyInstaller"
+"$PY" -m PyInstaller Keepers.spec --clean --noconfirm
 
 echo "==> 3/5 Code signing with hardened runtime"
 codesign --deep --force --options runtime \

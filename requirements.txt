@@ -9,4 +9,3 @@ scipy>=1.10.0
 mediapipe>=0.10.0
 opencv-python>=4.8.0
 pywebview>=5.0
-py2app>=0.28
