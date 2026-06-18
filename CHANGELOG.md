@@ -16,8 +16,18 @@ step for that.
   refused to relocate MediaPipe's `libmediapipe.dylib` Mach-O header
   ("delta=56" headerpad overflow), and no version pin or pre-pad worked
   around it. `Keepers.spec` replaces `setup.py`.
+- Notarization no longer uses `notarytool --wait`. We submit, capture the
+  submission ID, and poll `notarytool info` ourselves with exponential
+  backoff. `--wait` proved unreliable on long-running CI runners — the
+  first accepted submission was lost because the runner timed out before
+  notarytool's polling returned a verdict.
 - Test files moved from the repo root into `tests/`. Run with
   `python -m unittest discover -s tests`.
+
+### Added
+- `.github/workflows/notary-status.yml`: a diagnostic workflow that calls
+  `notarytool history` + `notarytool log` so we can ask Apple directly
+  what state past submissions are in.
 
 ## [1.3.0] - 2026-06-17
 

@@ -17,10 +17,9 @@ permissions:
 jobs:
   build:
     runs-on: macos-14
-    # Notarization is the bottleneck. Apple typically responds in 5-15 min,
-    # but the queue can stretch past an hour during peak load or on a team's
-    # first few submissions. Give it room before we cancel ourselves.
-    timeout-minutes: 120
+    # Notarization on this account empirically takes 1-3 hours. Allow up to
+    # ~5h total so the build + notarization poll always has headroom.
+    timeout-minutes: 300
     steps:
       - uses: actions/checkout@v4
 

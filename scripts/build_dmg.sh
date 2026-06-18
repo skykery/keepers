@@ -38,38 +38,62 @@ codesign --deep --force --options runtime \
     "${APP_BUNDLE}"
 codesign --verify --deep --strict --verbose=4 "${APP_BUNDLE}"
 
-echo "==> 4/5 Notarizing (will block until Apple responds)"
+echo "==> 4/5 Notarizing"
 NOTARY_ZIP="dist/${APP_NAME}.zip"
-NOTARY_LOG="dist/notary-submit.log"
 ditto -c -k --keepParent "${APP_BUNDLE}" "${NOTARY_ZIP}"
 
-set +e
-xcrun notarytool submit "${NOTARY_ZIP}" \
+# Submit without --wait so we get the submission ID immediately and can poll
+# on our own schedule. notarytool's built-in --wait stops printing intermediate
+# state after a while and proved unreliable on long submissions in CI.
+echo "==> Submitting to Apple"
+SUBMIT_OUT="$(xcrun notarytool submit "${NOTARY_ZIP}" \
     --apple-id "${APPLE_ID}" \
     --team-id "${APPLE_TEAM_ID}" \
     --password "${APPLE_APP_PASSWORD}" \
-    --wait 2>&1 | tee "${NOTARY_LOG}"
-NOTARY_EXIT=${PIPESTATUS[0]}
-set -e
+    --output-format json)"
+echo "${SUBMIT_OUT}"
+SUBMISSION_ID="$(echo "${SUBMIT_OUT}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')"
+echo "Submission ID: ${SUBMISSION_ID}"
 
-# Whether Apple accepted or rejected, fetch the detailed log so we can
-# diagnose issues. notarytool prints "id: <uuid>" near the top of its output.
-SUBMISSION_ID=$(grep -E '^[[:space:]]*id:' "${NOTARY_LOG}" | head -1 | awk '{print $2}')
-if [[ -n "${SUBMISSION_ID}" ]]; then
-    echo "==> Fetching Apple's notarization log for ${SUBMISSION_ID}"
-    xcrun notarytool log "${SUBMISSION_ID}" \
+# Apple takes 1-3 hours per submission on this account, in practice. Cap at 4h
+# and exponentially back off polling so we don't hammer the API.
+NOTARY_TIMEOUT_SECONDS="${NOTARY_TIMEOUT_SECONDS:-14400}"
+DEADLINE=$(($(date +%s) + NOTARY_TIMEOUT_SECONDS))
+SLEEP=30
+echo "==> Polling notarytool info (timeout in ${NOTARY_TIMEOUT_SECONDS}s)"
+while true; do
+    if [[ "$(date +%s)" -gt "${DEADLINE}" ]]; then
+        echo "Notarization timed out. Submission ${SUBMISSION_ID} is still pending." >&2
+        echo "Use the notary-status workflow to check it later." >&2
+        exit 1
+    fi
+    INFO_JSON="$(xcrun notarytool info "${SUBMISSION_ID}" \
         --apple-id "${APPLE_ID}" \
         --team-id "${APPLE_TEAM_ID}" \
-        --password "${APPLE_APP_PASSWORD}" || true
-fi
-
-if [[ ${NOTARY_EXIT} -ne 0 ]]; then
-    echo "Notarization failed with exit code ${NOTARY_EXIT}" >&2
-    exit ${NOTARY_EXIT}
-fi
+        --password "${APPLE_APP_PASSWORD}" \
+        --output-format json 2>/dev/null || echo '{}')"
+    STATUS="$(echo "${INFO_JSON}" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("status","?"))' 2>/dev/null || echo "?")"
+    echo "  $(date -u +%H:%M:%SZ) status=${STATUS}"
+    case "${STATUS}" in
+        Accepted) break ;;
+        Invalid|Rejected)
+            echo "==> Fetching Apple's notarization log"
+            xcrun notarytool log "${SUBMISSION_ID}" \
+                --apple-id "${APPLE_ID}" \
+                --team-id "${APPLE_TEAM_ID}" \
+                --password "${APPLE_APP_PASSWORD}" || true
+            exit 1
+            ;;
+        *)
+            sleep "${SLEEP}"
+            # Back off: 30s -> 60s -> 120s -> ... cap at 5 min.
+            SLEEP=$((SLEEP < 300 ? SLEEP * 2 : 300))
+            ;;
+    esac
+done
 
 xcrun stapler staple "${APP_BUNDLE}"
-rm -f "${NOTARY_ZIP}" "${NOTARY_LOG}"
+rm -f "${NOTARY_ZIP}"
 
 echo "==> 5/5 Building .dmg"
 if ! command -v create-dmg >/dev/null 2>&1; then
