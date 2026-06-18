@@ -1,0 +1,63 @@
+name: Notarization status
+
+# Diagnostic workflow: asks Apple what state our recent notarization
+# submissions are in. Run when a release workflow's notarization step
+# hangs or fails without a clear verdict.
+
+on:
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: "How many recent submissions to inspect"
+        type: string
+        default: "5"
+
+jobs:
+  history:
+    runs-on: macos-14
+    timeout-minutes: 15
+    steps:
+      - name: List recent submissions
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          echo "=== notarytool history ==="
+          xcrun notarytool history \
+            --apple-id "$APPLE_ID" \
+            --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_APP_PASSWORD" \
+            --output-format json > history.json
+          cat history.json | python3 -m json.tool
+
+      - name: Fetch per-submission logs
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          LIMIT: ${{ inputs.limit }}
+        run: |
+          # Pull the top N submission IDs and fetch each one's log.
+          # Apple returns "Accepted" / "Invalid" / "In Progress" per submission.
+          IDS=$(python3 -c "
+          import json
+          data = json.load(open('history.json'))
+          for entry in data.get('history', [])[:int('${LIMIT}')]:
+              print(f\"{entry['id']}|{entry.get('status', '?')}|{entry.get('createdDate', '?')}\")
+          ")
+          if [[ -z "$IDS" ]]; then
+              echo "No submissions in history."
+              exit 0
+          fi
+          while IFS='|' read -r id status created; do
+              echo ""
+              echo "=== Submission $id"
+              echo "    status:  $status"
+              echo "    created: $created"
+              echo "--- notarytool log ---"
+              xcrun notarytool log "$id" \
+                  --apple-id "$APPLE_ID" \
+                  --team-id "$APPLE_TEAM_ID" \
+                  --password "$APPLE_APP_PASSWORD" 2>&1 || echo "(log fetch failed for this submission)"
+          done <<< "$IDS"
