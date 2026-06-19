@@ -86,7 +86,54 @@ create-dmg \
     "${APP_BUNDLE}"
 
 codesign --force --sign "${DEVELOPER_ID}" "dist/${DMG_NAME}"
-xcrun stapler staple "dist/${DMG_NAME}"
+
+# Apple's strict flow is to also notarize+staple the .dmg itself (a second
+# submission round). On this account each round takes 1-4h, so by default
+# we skip that step. The .app inside is fully notarized and stapled, so
+# Gatekeeper only does a brief online check when the user first opens the
+# .dmg; once the .app is in /Applications it's fully offline-verified.
+# Set STAPLE_DMG=1 to opt into the strict path.
+if [[ "${STAPLE_DMG:-0}" == "1" ]]; then
+    echo "==> Submitting .dmg for its own notarization round"
+    DMG_SUBMIT_OUT="$(xcrun notarytool submit "dist/${DMG_NAME}" \
+        --apple-id "${APPLE_ID}" \
+        --team-id "${APPLE_TEAM_ID}" \
+        --password "${APPLE_APP_PASSWORD}" \
+        --output-format json)"
+    echo "${DMG_SUBMIT_OUT}"
+    DMG_SUBMISSION_ID="$(echo "${DMG_SUBMIT_OUT}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')"
+
+    DMG_DEADLINE=$(($(date +%s) + NOTARY_TIMEOUT_SECONDS))
+    SLEEP=15
+    while true; do
+        if [[ "$(date +%s)" -gt "${DMG_DEADLINE}" ]]; then
+            echo ".dmg notarization still pending after ${NOTARY_TIMEOUT_SECONDS}s." >&2
+            exit 1
+        fi
+        DMG_INFO="$(xcrun notarytool info "${DMG_SUBMISSION_ID}" \
+            --apple-id "${APPLE_ID}" \
+            --team-id "${APPLE_TEAM_ID}" \
+            --password "${APPLE_APP_PASSWORD}" \
+            --output-format json 2>/dev/null || echo '{}')"
+        DMG_STATUS="$(echo "${DMG_INFO}" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("status","?"))' 2>/dev/null || echo "?")"
+        echo "  $(date -u +%H:%M:%SZ) dmg status=${DMG_STATUS}"
+        case "${DMG_STATUS}" in
+            Accepted) break ;;
+            Invalid|Rejected)
+                xcrun notarytool log "${DMG_SUBMISSION_ID}" \
+                    --apple-id "${APPLE_ID}" \
+                    --team-id "${APPLE_TEAM_ID}" \
+                    --password "${APPLE_APP_PASSWORD}" || true
+                exit 1
+                ;;
+            *)
+                sleep "${SLEEP}"
+                SLEEP=$((SLEEP < 120 ? SLEEP * 2 : 120))
+                ;;
+        esac
+    done
+    xcrun stapler staple "dist/${DMG_NAME}"
+fi
 
 echo ""
 echo "Done. Artifact: dist/${DMG_NAME}"
