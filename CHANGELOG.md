@@ -11,6 +11,14 @@ step for that.
 
 ## [Unreleased]
 
+### Added
+
+### Changed
+
+### Fixed
+
+## [1.3.1] - 2026-06-19
+
 ### Changed
 - Switched the .app bundler from py2app to PyInstaller. py2app's macholib
   refused to relocate MediaPipe's `libmediapipe.dylib` Mach-O header
