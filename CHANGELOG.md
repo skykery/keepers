@@ -12,6 +12,14 @@ step for that.
 ## [Unreleased]
 
 ### Added
+
+### Changed
+
+### Fixed
+
+## [1.3.2] - 2026-06-19
+
+### Added
 - Dual-architecture release builds. CI now matrix-builds the .app on a
   `macos-13` Intel runner (x86_64) AND a `macos-14` Apple Silicon runner
   (arm64), notarizes both, and ships two .dmgs per release. Previous
