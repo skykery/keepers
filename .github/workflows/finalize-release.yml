@@ -1,0 +1,128 @@
+name: Finalize release
+
+# Manually triggered second half of the release. Run this after the Release
+# workflow has built+signed+submitted, and Apple has Accepted the submission.
+#
+# Pulls the signed .app from the build run's artifact, staples the ticket,
+# builds + signs + staples the .dmg, and (if a tag is provided) publishes
+# the GitHub Release.
+
+on:
+  workflow_dispatch:
+    inputs:
+      submission_id:
+        description: "Apple notarization submission ID from the build run"
+        type: string
+        required: true
+      build_run_id:
+        description: "GitHub run ID of the Release (build + submit) workflow that produced the signed .app"
+        type: string
+        required: true
+      tag:
+        description: "Git tag to publish, e.g. v1.3.1. Leave empty for a dry run (no GitHub Release, just an artifact)."
+        type: string
+        required: false
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  finalize:
+    runs-on: macos-14
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - name: Resolve version
+        run: |
+          FILE_VERSION="$(tr -d '[:space:]' < VERSION)"
+          if [[ -n "${{ inputs.tag }}" ]]; then
+            TAG_VERSION="${{ inputs.tag }}"
+            TAG_VERSION="${TAG_VERSION#v}"
+            if [[ "$TAG_VERSION" != "$FILE_VERSION" ]]; then
+              echo "Tag ${{ inputs.tag }} does not match VERSION file ($FILE_VERSION)." >&2
+              exit 1
+            fi
+          fi
+          echo "VERSION=$FILE_VERSION" >> "$GITHUB_ENV"
+
+      - name: Install create-dmg
+        run: brew install create-dmg
+
+      - name: Download signed .app from build run
+        uses: actions/download-artifact@v4
+        with:
+          name: Keepers-${{ env.VERSION }}-signed-app
+          path: dist/
+          run-id: ${{ inputs.build_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Unarchive signed .app
+        run: |
+          cd dist
+          tar -xzf "Keepers-${{ env.VERSION }}-signed.tar.gz"
+          rm "Keepers-${{ env.VERSION }}-signed.tar.gz"
+
+      - name: Import Developer ID certificate
+        env:
+          P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+          P12_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_P12_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          CERT_PATH="$RUNNER_TEMP/cert.p12"
+          KEYCHAIN_PATH="$RUNNER_TEMP/build.keychain-db"
+          echo "$P12_BASE64" | base64 --decode > "$CERT_PATH"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERT_PATH" -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | tr -d '"')
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          rm "$CERT_PATH"
+
+      - name: Staple + build .dmg + sign + staple
+        env:
+          SUBMISSION_ID: ${{ inputs.submission_id }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          DEVELOPER_ID: ${{ secrets.MACOS_DEVELOPER_ID }}
+          # 1h is plenty because we only enter this workflow after Apple already
+          # said Accepted; the poll here is just a sanity check.
+          NOTARY_TIMEOUT_SECONDS: "3600"
+        run: scripts/finalize_release.sh
+
+      - name: Extract release notes from CHANGELOG
+        if: inputs.tag != ''
+        run: |
+          python3 - "$VERSION" > release-notes.md <<'PY'
+          import re, sys
+          version = sys.argv[1]
+          text = open("CHANGELOG.md").read()
+          pattern = rf"^## \[{re.escape(version)}\][^\n]*\n(.*?)(?=^## \[|\Z)"
+          m = re.search(pattern, text, flags=re.DOTALL | re.MULTILINE)
+          if not m:
+              sys.exit(f"No CHANGELOG section for [{version}]")
+          sys.stdout.write(m.group(1).strip() + "\n")
+          PY
+
+      - name: Create GitHub Release
+        if: inputs.tag != ''
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag }}
+          name: Keepers ${{ env.VERSION }}
+          body_path: release-notes.md
+          files: dist/Keepers-*.dmg
+          fail_on_unmatched_files: true
+
+      - name: Upload .dmg as workflow artifact
+        if: inputs.tag == ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: Keepers-${{ env.VERSION }}-dmg
+          path: dist/Keepers-*.dmg
+          retention-days: 14

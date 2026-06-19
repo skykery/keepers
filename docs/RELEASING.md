@@ -1,9 +1,14 @@
 # Releasing Keepers
 
-Releases are tag-driven. Push a `vX.Y.Z` tag → `.github/workflows/release.yml`
-runs on a `macos-14` runner, builds the `.app`, signs and notarizes it with
-Apple, and attaches the resulting `.dmg` to a GitHub Release whose body is
-the matching CHANGELOG section.
+Releases are split across two workflows because Apple's notarization queue
+takes 1–4 hours per submission on this account, and holding a macOS runner
+during the wait would burn money for no reason.
+
+| Workflow | When | What it does |
+|---|---|---|
+| **Release (build + submit)** | On `vX.Y.Z` tag push, or manual | Build, sign, submit to Apple, upload signed `.app` artifact. Exits in ~30 min. |
+| **Notarization status** | Manual, anytime | Calls `notarytool history` and `notarytool log` so you can ask Apple what state your submissions are in. |
+| **Finalize release** | Manual, once Apple accepts | Downloads the signed `.app` from the build run, staples the ticket, builds `.dmg`, creates the GitHub Release. ~15 min. |
 
 ## Per-release flow
 
@@ -14,12 +19,30 @@ $EDITOR CHANGELOG.md
 # 2. Bump (writes VERSION, rewrites CHANGELOG, commits, creates tag).
 scripts/bump.sh patch    # or minor / major / 1.5.0
 
-# 3. Push commit + tag together. The tag push triggers the release workflow.
+# 3. Push commit + tag together. The tag push triggers the build workflow.
 git push --follow-tags
 ```
 
-Watch the workflow run on the Actions tab. A clean run takes ~25–35 minutes
-(most of that is PyInstaller bundling PyTorch + notarization).
+The build workflow finishes in ~30 minutes. At the end its log prints the
+exact inputs to give the Finalize workflow:
+
+```
+submission_id: <uuid>
+build_run_id:  <run id>
+tag:           v1.3.1
+```
+
+Wait for Apple. Check status anytime via the **Notarization status** workflow.
+When the latest submission shows `Accepted`, open **Actions → Finalize release
+→ Run workflow**, paste the three values, and run it. ~15 minutes later the
+GitHub Release exists with the `.dmg` attached.
+
+### Dry runs
+
+Trigger the **Release (build + submit)** workflow manually (no tag needed)
+to test the bundling pipeline. The signed `.app` is uploaded as an artifact.
+You can then run **Finalize release** with an empty `tag` input to produce
+a `.dmg` artifact without publishing a GitHub Release.
 
 ## One-time setup
 
@@ -64,18 +87,37 @@ exist in **Settings → Secrets and variables → Actions**:
 
 ## Local releases (without CI)
 
-You don't need to use the GitHub workflow if you'd rather build locally:
+You don't need to use the GitHub workflows if you'd rather build locally.
+Set the four env vars first:
 
 ```bash
 export DEVELOPER_ID="Developer ID Application: Alin Banuta (TEAMID12345)"
 export APPLE_ID="you@example.com"
 export APPLE_TEAM_ID="TEAMID12345"
 export APPLE_APP_PASSWORD="xxxx-xxxx-xxxx-xxxx"
+```
+
+Then either run the full one-shot pipeline (blocks for hours during
+notarization):
+
+```bash
 scripts/build_dmg.sh
 ```
 
-This produces `dist/Keepers-<version>.dmg`. Upload it manually to the
-GitHub Release if you want it published.
+Or split it the same way CI does, so you can walk away during the wait:
+
+```bash
+scripts/build_and_sign.sh                                 # ~5 min
+SUBMISSION_ID="$(scripts/submit_notarization.sh)"         # ~30 s
+echo "$SUBMISSION_ID"   # save this somewhere
+# ... walk away. Check periodically:
+xcrun notarytool history --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD"
+# Once Accepted:
+SUBMISSION_ID="$SUBMISSION_ID" scripts/finalize_release.sh   # ~5 min
+```
+
+Either path produces `dist/Keepers-<version>.dmg`. Upload it manually to
+the GitHub Release if you want it published.
 
 ## Troubleshooting
 

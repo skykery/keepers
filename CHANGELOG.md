@@ -16,11 +16,13 @@ step for that.
   refused to relocate MediaPipe's `libmediapipe.dylib` Mach-O header
   ("delta=56" headerpad overflow), and no version pin or pre-pad worked
   around it. `Keepers.spec` replaces `setup.py`.
-- Notarization no longer uses `notarytool --wait`. We submit, capture the
-  submission ID, and poll `notarytool info` ourselves with exponential
-  backoff. `--wait` proved unreliable on long-running CI runners — the
-  first accepted submission was lost because the runner timed out before
-  notarytool's polling returned a verdict.
+- Releases are now a two-workflow pipeline. **Release (build + submit)**
+  builds, signs, and submits to Apple, then exits (~30 min). Once Apple
+  accepts (typically 1–4 h on this account), the **Finalize release**
+  workflow is triggered manually to staple, build the `.dmg`, and publish
+  the GitHub Release. Splits the macOS-runner cost without losing
+  automation. `scripts/build_dmg.sh` decomposed into
+  `build_and_sign.sh` + `submit_notarization.sh` + `finalize_release.sh`.
 - Test files moved from the repo root into `tests/`. Run with
   `python -m unittest discover -s tests`.
 
@@ -28,6 +30,8 @@ step for that.
 - `.github/workflows/notary-status.yml`: a diagnostic workflow that calls
   `notarytool history` + `notarytool log` so we can ask Apple directly
   what state past submissions are in.
+- `.github/workflows/finalize-release.yml`: the second half of the split
+  release pipeline.
 
 ## [1.3.0] - 2026-06-17
 
