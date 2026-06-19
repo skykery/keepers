@@ -12,6 +12,12 @@ step for that.
 ## [Unreleased]
 
 ### Added
+- Dual-architecture release builds. CI now matrix-builds the .app on a
+  `macos-13` Intel runner (x86_64) AND a `macos-14` Apple Silicon runner
+  (arm64), notarizes both, and ships two .dmgs per release. Previous
+  releases were arm64-only, which left Intel Macs with "this application
+  is not supported on this Mac" errors. PyTorch and MediaPipe don't ship
+  universal2 wheels on PyPI so a single universal2 build wasn't an option.
 
 ### Changed
 

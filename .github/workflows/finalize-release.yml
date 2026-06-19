@@ -1,25 +1,27 @@
 name: Finalize release
 
-# Manually triggered second half of the release. Run this after the Release
-# workflow has built+signed+submitted, and Apple has Accepted the submission.
-#
-# Pulls the signed .app from the build run's artifact, staples the ticket,
-# builds + signs + staples the .dmg, and (if a tag is provided) publishes
-# the GitHub Release.
+# Manually triggered after Apple Accepts BOTH per-arch submissions. Each
+# matrix job downloads its arch's signed .app, confirms Apple's verdict,
+# staples, builds a per-arch .dmg, and uploads it. A final release job
+# downloads both .dmgs and creates a single GitHub Release.
 
 on:
   workflow_dispatch:
     inputs:
-      submission_id:
-        description: "Apple notarization submission ID from the build run"
+      submission_id_x86_64:
+        description: "Apple submission ID for the x86_64 (Intel) build"
+        type: string
+        required: true
+      submission_id_arm64:
+        description: "Apple submission ID for the arm64 (Apple Silicon) build"
         type: string
         required: true
       build_run_id:
-        description: "GitHub run ID of the Release (build + submit) workflow that produced the signed .app"
+        description: "GitHub run ID of the Release workflow that produced both signed .apps"
         type: string
         required: true
       tag:
-        description: "Git tag to publish, e.g. v1.3.1. Leave empty for a dry run (no GitHub Release, just an artifact)."
+        description: "Git tag to publish, e.g. v1.3.2. Leave empty for a dry run (artifacts only, no Release)."
         type: string
         required: false
 
@@ -29,13 +31,19 @@ permissions:
 
 jobs:
   finalize:
-    runs-on: macos-14
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-13
+            arch: x86_64
+          - os: macos-14
+            arch: arm64
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 90
+    # Use main's scripts, not the tag's. Hotfixes to the finalize scripts
+    # should apply to in-flight releases.
     steps:
-      # Check out the latest main, not the release tag. The finalize scripts
-      # may have fixes pushed after the tag was cut (we hit this in v1.3.1).
-      # The CHANGELOG section for inputs.tag's version is still required,
-      # which the "Resolve version" step verifies below.
       - uses: actions/checkout@v4
 
       - name: Resolve version
@@ -57,7 +65,7 @@ jobs:
       - name: Download signed .app from build run
         uses: actions/download-artifact@v4
         with:
-          name: Keepers-${{ env.VERSION }}-signed-app
+          name: Keepers-${{ env.VERSION }}-${{ matrix.arch }}-signed-app
           path: dist/
           run-id: ${{ inputs.build_run_id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -65,8 +73,8 @@ jobs:
       - name: Unarchive signed .app
         run: |
           cd dist
-          tar -xzf "Keepers-${{ env.VERSION }}-signed.tar.gz"
-          rm "Keepers-${{ env.VERSION }}-signed.tar.gz"
+          tar -xzf "Keepers-${{ env.VERSION }}-${{ matrix.arch }}-signed.tar.gz"
+          rm "Keepers-${{ env.VERSION }}-${{ matrix.arch }}-signed.tar.gz"
 
       - name: Import Developer ID certificate
         env:
@@ -85,20 +93,45 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           rm "$CERT_PATH"
 
-      - name: Staple + build .dmg + sign + staple
+      - name: Staple + build .dmg + sign
         env:
-          SUBMISSION_ID: ${{ inputs.submission_id }}
+          # GitHub Actions has no real ternary; this is the standard
+          # cond && a || b workaround. Both inputs are required:true, so
+          # the truthiness pitfall doesn't bite us here.
+          SUBMISSION_ID: ${{ matrix.arch == 'x86_64' && inputs.submission_id_x86_64 || inputs.submission_id_arm64 }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
           DEVELOPER_ID: ${{ secrets.MACOS_DEVELOPER_ID }}
-          # 1h is plenty because we only enter this workflow after Apple already
-          # said Accepted; the poll here is just a sanity check.
+          ARCH: ${{ matrix.arch }}
           NOTARY_TIMEOUT_SECONDS: "3600"
         run: scripts/finalize_release.sh
 
+      - name: Upload per-arch .dmg
+        uses: actions/upload-artifact@v4
+        with:
+          name: Keepers-${{ env.VERSION }}-${{ matrix.arch }}-dmg
+          path: dist/Keepers-${{ env.VERSION }}-${{ matrix.arch }}.dmg
+          retention-days: 14
+
+  release:
+    needs: finalize
+    if: inputs.tag != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read VERSION
+        run: echo "VERSION=$(tr -d '[:space:]' < VERSION)" >> "$GITHUB_ENV"
+
+      - name: Download all per-arch .dmgs
+        uses: actions/download-artifact@v4
+        with:
+          pattern: Keepers-${{ env.VERSION }}-*-dmg
+          path: dmgs/
+          merge-multiple: true
+
       - name: Extract release notes from CHANGELOG
-        if: inputs.tag != ''
         run: |
           python3 - "$VERSION" > release-notes.md <<'PY'
           import re, sys
@@ -112,19 +145,10 @@ jobs:
           PY
 
       - name: Create GitHub Release
-        if: inputs.tag != ''
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ inputs.tag }}
           name: Keepers ${{ env.VERSION }}
           body_path: release-notes.md
-          files: dist/Keepers-*.dmg
+          files: dmgs/*.dmg
           fail_on_unmatched_files: true
-
-      - name: Upload .dmg as workflow artifact
-        if: inputs.tag == ''
-        uses: actions/upload-artifact@v4
-        with:
-          name: Keepers-${{ env.VERSION }}-dmg
-          path: dist/Keepers-*.dmg
-          retention-days: 14

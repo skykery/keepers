@@ -1,12 +1,10 @@
 name: Release (build + submit)
 
-# Builds, signs, and submits the .app to Apple. Stops there — does NOT wait
-# for notarization. Once Apple accepts (check via the Notarization status
-# workflow), manually run the Finalize release workflow with the submission
-# ID and this run's ID to staple + build .dmg + publish the GitHub Release.
-#
-# Apple's notarization queue takes hours per submission on this account, so
-# holding a macOS runner during the wait isn't worth the cost.
+# Builds, signs, and submits one .app per architecture. Stops there — does
+# NOT wait for notarization. Once Apple accepts (check via Notarization
+# status), manually trigger Finalize release with both submission IDs and
+# this run's ID to staple, build .dmg per arch, and publish the GitHub
+# Release with both .dmgs attached.
 
 on:
   push:
@@ -15,7 +13,7 @@ on:
   workflow_dispatch:
     inputs:
       dry_run:
-        description: "Build + sign + submit; no GitHub Release is produced (artifact-only)"
+        description: "Build + sign + submit; no GitHub Release is produced (artifacts only)"
         type: boolean
         default: true
 
@@ -24,7 +22,17 @@ permissions:
 
 jobs:
   build:
-    runs-on: macos-14
+    strategy:
+      # Keep going if one arch fails — partial release is still better than no
+      # release while we diagnose.
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-13
+            arch: x86_64
+          - os: macos-14
+            arch: arm64
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
@@ -89,29 +97,24 @@ jobs:
       - name: Archive signed .app for cross-run transfer
         run: |
           cd dist
-          tar -czf "Keepers-${{ env.VERSION }}-signed.tar.gz" Keepers.app
+          tar -czf "Keepers-${{ env.VERSION }}-${{ matrix.arch }}-signed.tar.gz" Keepers.app
 
       - name: Upload signed .app artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Keepers-${{ env.VERSION }}-signed-app
-          path: dist/Keepers-${{ env.VERSION }}-signed.tar.gz
+          name: Keepers-${{ env.VERSION }}-${{ matrix.arch }}-signed-app
+          path: dist/Keepers-${{ env.VERSION }}-${{ matrix.arch }}-signed.tar.gz
           retention-days: 14
 
       - name: Print finalize instructions
         run: |
           cat <<EOF
           =======================================================================
-          Build submitted to Apple. Next steps:
-
-          1. Wait for notarization. Apple takes 1-4 hours per submission on this
-             account. Check status with the "Notarization status" workflow, or:
-                 xcrun notarytool history --apple-id ... --team-id ... --password ...
-
-          2. Once status is Accepted, trigger the "Finalize release" workflow
-             with these inputs:
-                 submission_id: ${{ steps.submit.outputs.submission_id }}
-                 build_run_id:  ${{ github.run_id }}
-                 tag:           ${{ github.event_name == 'push' && github.ref_name || '(leave empty for dry run)' }}
+          [${{ matrix.arch }}] Build submitted to Apple. To complete the release
+          after BOTH archs are Accepted (check Notarization status workflow),
+          trigger Finalize release with:
+              submission_id_${{ matrix.arch }}: ${{ steps.submit.outputs.submission_id }}
+              build_run_id:                       ${{ github.run_id }}
+              tag:                                ${{ github.event_name == 'push' && github.ref_name || '(empty for dry run)' }}
           =======================================================================
           EOF

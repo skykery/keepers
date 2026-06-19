@@ -6,9 +6,9 @@ during the wait would burn money for no reason.
 
 | Workflow | When | What it does |
 |---|---|---|
-| **Release (build + submit)** | On `vX.Y.Z` tag push, or manual | Build, sign, submit to Apple, upload signed `.app` artifact. Exits in ~30 min. |
-| **Notarization status** | Manual, anytime | Calls `notarytool history` and `notarytool log` so you can ask Apple what state your submissions are in. |
-| **Finalize release** | Manual, once Apple accepts | Downloads the signed `.app` from the build run, staples the ticket, builds `.dmg`, creates the GitHub Release. ~15 min. |
+| **Release (build + submit)** | On `vX.Y.Z` tag push, or manual | Matrix builds for x86_64 (`macos-13`) and arm64 (`macos-14`). Each arch: build, sign, submit to Apple, upload signed `.app` artifact. Exits in ~30–60 min. |
+| **Notarization status** | Manual, anytime | Calls `notarytool history` and `notarytool log` so you can ask Apple what state your submissions are in. Both arch submissions show up here. |
+| **Finalize release** | Manual, once Apple accepts BOTH archs | Matrix downloads each signed `.app`, staples, builds per-arch `.dmg`. A final job creates one GitHub Release with both `.dmg`s attached. ~20 min. |
 
 ## Per-release flow
 
@@ -23,19 +23,20 @@ scripts/bump.sh patch    # or minor / major / 1.5.0
 git push --follow-tags
 ```
 
-The build workflow finishes in ~30 minutes. At the end its log prints the
-exact inputs to give the Finalize workflow:
+The build workflow runs two arch jobs in parallel and finishes in ~30–60 min.
+Each arch's job ends with a log message listing the inputs Finalize needs:
 
 ```
-submission_id: <uuid>
-build_run_id:  <run id>
-tag:           v1.3.1
+submission_id_x86_64: <uuid>     (from the macos-13 job)
+submission_id_arm64:  <uuid>     (from the macos-14 job)
+build_run_id:         <run id>   (same for both jobs)
+tag:                  v1.3.2
 ```
 
-Wait for Apple. Check status anytime via the **Notarization status** workflow.
-When the latest submission shows `Accepted`, open **Actions → Finalize release
-→ Run workflow**, paste the three values, and run it. ~15 minutes later the
-GitHub Release exists with the `.dmg` attached.
+Wait for Apple to Accept **both** submissions (check via Notarization status).
+Then open **Actions → Finalize release → Run workflow**, paste all four values,
+and run it. ~20 minutes later one GitHub Release exists with both .dmgs:
+`Keepers-1.3.2-x86_64.dmg` and `Keepers-1.3.2-arm64.dmg`.
 
 ### Dry runs
 
