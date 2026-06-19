@@ -32,9 +32,11 @@ jobs:
     runs-on: macos-14
     timeout-minutes: 90
     steps:
+      # Check out the latest main, not the release tag. The finalize scripts
+      # may have fixes pushed after the tag was cut (we hit this in v1.3.1).
+      # The CHANGELOG section for inputs.tag's version is still required,
+      # which the "Resolve version" step verifies below.
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.tag || github.ref }}
 
       - name: Resolve version
         run: |

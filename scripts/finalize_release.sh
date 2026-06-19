@@ -24,7 +24,9 @@ cd "$(dirname "$0")/.."
 
 APP_NAME="Keepers"
 APP_BUNDLE="dist/${APP_NAME}.app"
-VERSION="$(cat VERSION | tr -d '[:space:]')"
+# Honor an externally-set VERSION (e.g. from the finalize workflow when main
+# has moved past the release tag). Fall back to the in-tree VERSION file.
+VERSION="${VERSION:-$(cat VERSION | tr -d '[:space:]')}"
 DMG_NAME="${APP_NAME}-${VERSION}.dmg"
 
 if [[ ! -d "${APP_BUNDLE}" ]]; then
