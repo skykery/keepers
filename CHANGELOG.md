@@ -16,6 +16,9 @@ step for that.
 ### Changed
 
 ### Fixed
+
+## [1.3.3] - 2026-07-13
+
 - Bundled `.app` crashed at "Downloading AI models" with a bogus
   "CLIPModel requires PyTorch" error. Real cause: `requirements.txt`
   had no upper bounds, so the Intel build pinned `torch==2.2.2` (last
