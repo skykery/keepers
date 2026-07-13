@@ -35,7 +35,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-13
+          # Self-hosted Intel Mac (label `intel-mac`). Must be online for
+          # this job to pick up.
+          - os: [self-hosted, macOS, X64, intel-mac]
             arch: x86_64
           - os: macos-14
             arch: arm64
@@ -113,6 +115,12 @@ jobs:
           name: Keepers-${{ env.VERSION }}-${{ matrix.arch }}-dmg
           path: dist/Keepers-${{ env.VERSION }}-${{ matrix.arch }}.dmg
           retention-days: 14
+
+      - name: Clean up ephemeral keychain
+        if: always()
+        run: |
+          KEYCHAIN_PATH="$RUNNER_TEMP/build.keychain-db"
+          security delete-keychain "$KEYCHAIN_PATH" 2>/dev/null || true
 
   release:
     needs: finalize

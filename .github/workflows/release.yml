@@ -28,7 +28,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-13
+          # Self-hosted Intel Mac (label `intel-mac`, configured at runner
+          # registration time). GitHub's macos-13 fleet is queue-starved.
+          - os: [self-hosted, macOS, X64, intel-mac]
             arch: x86_64
           - os: macos-14
             arch: arm64
@@ -118,3 +120,12 @@ jobs:
               tag:                                ${{ github.event_name == 'push' && github.ref_name || '(empty for dry run)' }}
           =======================================================================
           EOF
+
+      - name: Clean up ephemeral keychain
+        if: always()
+        run: |
+          KEYCHAIN_PATH="$RUNNER_TEMP/build.keychain-db"
+          # `delete-keychain` removes it from the user's search list AND from disk.
+          # Matters on self-hosted runners where the search list is the user's real
+          # login environment. No-op on GitHub-hosted (VM is thrown away anyway).
+          security delete-keychain "$KEYCHAIN_PATH" 2>/dev/null || true
