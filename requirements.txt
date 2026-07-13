@@ -1,10 +1,16 @@
-torch>=2.0.0
-torchvision>=0.15.0
-transformers>=4.30.0
+# torch 2.2.2 is the last PyTorch release that ships x86_64 macOS wheels on
+# PyPI. Newer torch is arm64-only. Since we build for both archs, we pin
+# torch (and torchvision) to what Intel Macs can actually install.
+torch==2.2.2
+torchvision==0.17.2
+# transformers >= 4.50-ish requires torch 2.4+, which we can't have on
+# Intel. Cap it below that so both archs install the same lib.
+transformers>=4.30.0,<4.50
 Pillow>=9.0.0
 rawpy>=0.18.0
 Flask>=3.0.0
-numpy>=1.24.0
+# numpy 2.x broke ABI compat with torch 2.2 and mediapipe 0.10.
+numpy>=1.24.0,<2
 scipy>=1.10.0
 mediapipe>=0.10.0
 opencv-python>=4.8.0

@@ -16,6 +16,14 @@ step for that.
 ### Changed
 
 ### Fixed
+- Bundled `.app` crashed at "Downloading AI models" with a bogus
+  "CLIPModel requires PyTorch" error. Real cause: `requirements.txt`
+  had no upper bounds, so the Intel build pinned `torch==2.2.2` (last
+  x86_64 macOS wheel on PyPI) but pulled the newest `transformers`,
+  which requires `torch >= 2.4`. transformers detected the mismatch
+  and disabled torch integration silently. Pinned `torch==2.2.2`,
+  `torchvision==0.17.2`, `transformers<4.50`, `numpy<2` — same lib
+  set on both archs.
 
 ## [1.3.2] - 2026-06-19
 
