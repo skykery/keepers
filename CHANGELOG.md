@@ -16,6 +16,9 @@ step for that.
 ### Changed
 
 ### Fixed
+
+## [1.3.4] - 2026-07-14
+
 - Skip macOS AppleDouble metadata files (`._*.JPG`) when scanning a
   photo folder. Common on external drives (FAT/exFAT/NTFS). Previously
   they passed the extension filter and PIL failed on each one — dozens
