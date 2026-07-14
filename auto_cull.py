@@ -77,6 +77,11 @@ class AutoCuller:
     def scan_photos(self) -> list[Path]:
         photos = []
         for f in self.originals_dir.iterdir():
+            # `._*` files are macOS AppleDouble metadata forks that appear on
+            # non-HFS+ volumes (FAT/exFAT/NTFS externals). They carry `.JPG`
+            # extensions but aren't images — PIL fails to open them.
+            if f.name.startswith("._"):
+                continue
             if f.is_file() and f.suffix.lower() in ALL_PHOTO_EXTENSIONS:
                 photos.append(f)
         return sorted(photos)

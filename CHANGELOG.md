@@ -16,6 +16,18 @@ step for that.
 ### Changed
 
 ### Fixed
+- Skip macOS AppleDouble metadata files (`._*.JPG`) when scanning a
+  photo folder. Common on external drives (FAT/exFAT/NTFS). Previously
+  they passed the extension filter and PIL failed on each one — dozens
+  of `Error loading ._000001.JPG: cannot identify image file` per session.
+- Reduce fork-related warnings and worker crashes. Set
+  `TOKENIZERS_PARALLELISM=false` before importing transformers/tokenizers
+  in the .app launcher and in `scoring.py`.
+- Remove deprecated `TRANSFORMERS_CACHE` env var (`HF_HOME` already covers
+  it in modern transformers).
+- Install `sys.excepthook` and `threading.excepthook` in the .app launcher
+  so silent background-thread crashes produce a stderr traceback instead
+  of a mystery restart.
 
 ## [1.3.3] - 2026-07-13
 

@@ -413,6 +413,9 @@ def preview_directory():
     other_count = 0
 
     for f in input_path.iterdir():
+        # Skip macOS AppleDouble metadata files (see auto_cull.py scan_photos).
+        if f.name.startswith("._"):
+            continue
         if f.is_file():
             ext = f.suffix.lower()
             if ext in RAW_EXTENSIONS:

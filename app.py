@@ -3,9 +3,18 @@
 Used as the PyInstaller entry point. Dev users can still run `webapp.py` directly for a browser-based session.
 """
 
+import os
+
+# Set BEFORE importing transformers/tokenizers. Silences the fork warning
+# and reduces the chance of resource_tracker child processes crashing during
+# scoring.
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+
 import socket
+import sys
 import threading
 import time
+import traceback
 import urllib.request
 
 import webview
@@ -45,7 +54,26 @@ class NativeApi:
         return result[0] if isinstance(result, (list, tuple)) else result
 
 
+def _install_excepthook() -> None:
+    """Log uncaught exceptions and background thread crashes to stderr.
+
+    Default Python drops thread exceptions silently. If the Flask serving
+    thread dies (or webview.start()'s cleanup does), we want a traceback,
+    not a mysterious blank window.
+    """
+
+    def hook(exc_type, exc_value, exc_tb):
+        print("[keepers] UNCAUGHT EXCEPTION:", file=sys.stderr)
+        traceback.print_exception(exc_type, exc_value, exc_tb, file=sys.stderr)
+        sys.stderr.flush()
+
+    sys.excepthook = hook
+    threading.excepthook = lambda args: hook(args.exc_type, args.exc_value, args.exc_traceback)
+
+
 def main():
+    _install_excepthook()
+
     port = _free_port()
     url = f"http://127.0.0.1:{port}"
 

@@ -79,7 +79,6 @@ def _download_file(
 def _download_hf_repo(repo_id: str, label: str, progress: ProgressFn) -> None:
     progress(f"{label}…")
     os.environ["HF_HOME"] = str(paths.model_cache_dir())
-    os.environ["TRANSFORMERS_CACHE"] = str(paths.model_cache_dir())
     from transformers import CLIPModel, CLIPProcessor
 
     CLIPModel.from_pretrained(

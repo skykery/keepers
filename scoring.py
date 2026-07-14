@@ -23,7 +23,10 @@ from scipy import ndimage
 MODEL_CACHE_DIR = str(paths.model_cache_dir())
 
 os.environ["HF_HOME"] = MODEL_CACHE_DIR
-os.environ["TRANSFORMERS_CACHE"] = MODEL_CACHE_DIR
+# `TOKENIZERS_PARALLELISM=false` silences the fork-after-parallelism warning
+# and reduces the number of child processes tokenizers can spawn. Reduces
+# `resource_tracker: process died unexpectedly` noise.
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
 
 
