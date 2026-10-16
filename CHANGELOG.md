@@ -11,6 +11,14 @@ step for that.
 
 ## [Unreleased]
 
+### Added
+
+### Changed
+
+### Fixed
+
+## [2.0.0] - 2026-10-16
+
 Keepers 2: a native Swift rewrite. One universal app for Apple Silicon and
 Intel, built on one GitHub-hosted runner.
 
