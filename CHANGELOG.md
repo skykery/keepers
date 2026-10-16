@@ -11,11 +11,56 @@ step for that.
 
 ## [Unreleased]
 
+Keepers 2: a native Swift rewrite. One universal app for Apple Silicon and
+Intel, built on one GitHub-hosted runner.
+
 ### Added
+
+- Burst and near-duplicate grouping (capture time + Vision feature prints).
+  Only the best frame of a group can be a Top Pick; the rest are shown
+  ranked next to it ("#3 of 10 similar shots").
+- RAW+JPEG pairs are treated as one photo; both files are linked.
+- Changing the preset re-sorts instantly without re-analysis.
+- `U` / `0` hands a photo you moved back to automatic placement.
+- `keepers-eval` command-line tool: prints every signal and decision for a
+  folder and compares them with your manual placements.
+- Tests run on every PR and push, on Apple Silicon and on Intel under
+  Rosetta.
 
 ### Changed
 
+- Rewritten in Swift/SwiftUI on Apple Vision, Core Image and ImageIO.
+  The app is ~3 MB instead of ~1 GB, needs no model download, and runs
+  fully offline. Requires macOS 13+.
+- New scoring: subject sharpness (eye band on faces, scale-normalized),
+  exposure clipping, Vision aesthetics (macOS 15+). See `docs/SCORING.md`.
+- Presets are now shares of the shoot (Strict 5%, Balanced 10%,
+  Lenient 20% of usable photos in Top Picks).
+- Trash only receives clear technical failures (out of focus, blown out,
+  black).
+- One workflow (`build.yml`) replaces Release, Finalize release and
+  Notarization status: a tag push tests, builds one universal `.app`,
+  notarizes it, and publishes the GitHub Release with one `.dmg`, with no
+  manual step. The self-hosted Intel runner is no longer used.
+- Hardened runtime with no entitlements.
+- Session state moved to `<folder>/.keepers/`. Earlier `scores.json` and
+  `organization.json` are ignored: the old organization file mixed
+  automatic and manual placements, so it can't be imported as manual moves.
+
+### Removed
+
+- Python app: PyTorch, transformers, CLIP, LAION, MediaPipe, OpenCV,
+  SciPy, rawpy, Flask, pywebview, PyInstaller.
+- Scene profiles (portrait/group/macro/landscape/action). Their weights
+  were never applied by the scorer, so they only added unexplained rules.
+- Legacy `cli.py` / `cull.py` keep/reject tool.
+
 ### Fixed
+
+- The Strict/Balanced/Lenient presets had no effect: the threshold was
+  passed in but folders always used fixed 0.7 / 0.4 cutoffs.
+- Automatic placements were saved as manual overrides, so re-running a
+  folder never re-sorted it.
 
 ## [1.3.4] - 2026-07-14
 

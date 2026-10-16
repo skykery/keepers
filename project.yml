@@ -1,0 +1,58 @@
+# XcodeGen spec. Generate the Xcode project with `xcodegen` (the
+# .xcodeproj is not checked in). Release builds are universal
+# (arm64 + x86_64) through Xcode's standard architectures.
+name: Keepers
+options:
+  bundleIdPrefix: com.skykery
+  deploymentTarget:
+    macOS: "13.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    # Overridden from the VERSION file by scripts/build_and_sign.sh.
+    MARKETING_VERSION: "0.0.0"
+    CURRENT_PROJECT_VERSION: "0.0.0"
+    SWIFT_VERSION: "5.0"
+packages:
+  KeepersCore:
+    path: KeepersCore
+targets:
+  Keepers:
+    type: application
+    platform: macOS
+    sources:
+      - path: App
+        excludes:
+          - Info.plist
+    dependencies:
+      - package: KeepersCore
+        product: KeepersCore
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleName: Keepers
+        CFBundleDisplayName: Keepers
+        CFBundleIconFile: Keepers
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
+        LSApplicationCategoryType: public.app-category.photography
+        NSHighResolutionCapable: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.skykery.keepers
+        PRODUCT_NAME: Keepers
+        ENABLE_HARDENED_RUNTIME: YES
+        # Ad-hoc for local builds; release signing happens in
+        # scripts/build_and_sign.sh with the Developer ID.
+        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGN_STYLE: Manual
+        DEAD_CODE_STRIPPING: YES
+schemes:
+  Keepers:
+    build:
+      targets:
+        Keepers: all
+    test:
+      targets:
+        - package: KeepersCore/KeepersCoreTests

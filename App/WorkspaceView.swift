@@ -1,0 +1,177 @@
+import AppKit
+import KeepersCore
+import SwiftUI
+
+struct WorkspaceView: View {
+    @EnvironmentObject private var model: AppModel
+    @State private var keyMonitor: Any?
+
+    var body: some View {
+        HStack(spacing: 0) {
+            GalleryView()
+            if model.inspectorVisible, let item = model.selectedItem {
+                Divider()
+                InspectorView(item: item)
+                    .frame(width: 360)
+            }
+        }
+        .toolbar {
+            ToolbarItem(placement: .navigation) {
+                Button { model.newSession() } label: { Label("Folders", systemImage: "chevron.backward") }
+                    .help("Back to folder selection")
+            }
+            ToolbarItem(placement: .principal) {
+                Picker("Folder", selection: Binding(get: { model.tab }, set: { model.select(tab: $0) })) {
+                    ForEach(Folder.allCases) { folder in
+                        Text("\(folder.rawValue)  \(model.count(folder))").tag(folder)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+            }
+            ToolbarItemGroup(placement: .primaryAction) {
+                Picker("Preset", selection: $model.preset) {
+                    ForEach(Preset.allCases) { Text($0.title).tag($0) }
+                }
+                .help("How selective Top Picks is. Your manual moves are kept.")
+                Button { model.reveal(model.tab) } label: { Label("Show in Finder", systemImage: "folder") }
+                    .help("Show \(model.tab.rawValue) in Finder")
+                Button { model.inspectorVisible.toggle() } label: { Label("Details", systemImage: "sidebar.right") }
+                    .help("Show or hide details (Return)")
+            }
+        }
+        .navigationTitle(model.folderURL?.lastPathComponent ?? "Keepers")
+        .onAppear { installKeyMonitor() }
+        .onDisappear { if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }; keyMonitor = nil }
+    }
+
+    private func installKeyMonitor() {
+        guard keyMonitor == nil else { return }
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            // Only for the main window: leave keys alone in open panels,
+            // sheets, menus, and text fields.
+            guard event.modifierFlags.intersection([.command, .control, .option]).isEmpty,
+                  NSApp.modalWindow == nil,
+                  let window = event.window, !(window is NSPanel), window.attachedSheet == nil,
+                  !(window.firstResponder is NSText)
+            else { return event }
+            switch event.keyCode {
+            case 123: model.step(-1); return nil                   // ←
+            case 124: model.step(1); return nil                    // →
+            case 36, 76: model.inspectorVisible.toggle(); return nil  // Return
+            case 53: model.inspectorVisible = false; return nil    // Esc
+            case 51, 117: model.moveSelection(to: .trash); return nil  // Delete
+            default: break
+            }
+            switch event.charactersIgnoringModifiers?.lowercased() {
+            case "p", "1": model.moveSelection(to: .picks)
+            case "r", "2": model.moveSelection(to: .review)
+            case "m", "3": model.moveSelection(to: .moments)
+            case "x": model.moveSelection(to: .trash)
+            case "u", "0": model.moveSelection(to: nil)
+            default: return event
+            }
+            return nil
+        }
+    }
+}
+
+struct GalleryView: View {
+    @EnvironmentObject private var model: AppModel
+    private let columns = [GridItem(.adaptive(minimum: 170, maximum: 240), spacing: 10)]
+
+    var body: some View {
+        let items = model.visibleItems
+        ScrollViewReader { proxy in
+            ScrollView {
+                if items.isEmpty {
+                    emptyState.padding(.top, 120)
+                } else {
+                    LazyVGrid(columns: columns, spacing: 10) {
+                        ForEach(items) { item in
+                            ThumbnailCell(item: item, selected: item.id == model.selection)
+                                .id(item.id)
+                                .onTapGesture(count: 2) { model.selection = item.id; model.inspectorVisible = true }
+                                .onTapGesture { model.selection = item.id }
+                        }
+                    }
+                    .padding(12)
+                }
+                if !model.failures.isEmpty {
+                    Text("\(model.failures.count) file(s) couldn't be read: \(model.failures.keys.sorted().joined(separator: ", "))")
+                        .font(.caption).foregroundStyle(.secondary).padding()
+                }
+            }
+            .onChange(of: model.selection) { id in
+                if let id { withAnimation(.easeInOut(duration: 0.15)) { proxy.scrollTo(id) } }
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .background(Color(nsColor: .underPageBackgroundColor))
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "tray").font(.system(size: 36)).foregroundStyle(.secondary)
+            Text("Nothing in \(model.tab.rawValue)").font(.headline)
+            Text("P  Top Picks · M  Moments · R  Review · X  Trash · U  back to automatic")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+    }
+}
+
+struct ThumbnailCell: View {
+    let item: PhotoItem
+    let selected: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            // The fixed-size container decides the layout; the filling image is
+            // only drawn into it, so wide frames can't push the cell wider.
+            Color.clear
+                .frame(height: 140)
+                .frame(maxWidth: .infinity)
+                .overlay(PhotoImage(photo: item.photo, size: 480))
+                .clipped()
+                .overlay(alignment: .topLeading) { badges.padding(5) }
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+            HStack(spacing: 4) {
+                Text(item.photo.name).font(.caption).lineLimit(1).truncationMode(.middle)
+                Spacer(minLength: 0)
+                if let q = item.score?.quality {
+                    Text("\(Int((q * 100).rounded()))").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                }
+            }
+        }
+        .padding(6)
+        .background(RoundedRectangle(cornerRadius: 9).fill(selected ? Color.accentColor.opacity(0.25) : .clear))
+        .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(selected ? Color.accentColor : .clear, lineWidth: 2))
+        .contentShape(Rectangle())
+    }
+
+    @ViewBuilder private var badges: some View {
+        HStack(spacing: 4) {
+            if item.isManual { badge("hand.point.up.left.fill", help: "Placed by you") }
+            if let d = item.decision, d.groupSize > 1 {
+                Text("\(d.rankInGroup)/\(d.groupSize)")
+                    .font(.caption2.weight(.semibold).monospacedDigit())
+                    .padding(.horizontal, 5).padding(.vertical, 2)
+                    .background(.ultraThinMaterial, in: Capsule())
+                    .help("Rank among \(d.groupSize) similar shots")
+            }
+            if let flaws = item.score?.flaws, !flaws.isEmpty {
+                badge("eye.slash.fill", help: flaws.joined(separator: ", "))
+            }
+            if !item.photo.companions.isEmpty { badge("square.on.square", help: "RAW + JPEG") }
+        }
+    }
+
+    private func badge(_ symbol: String, help: String) -> some View {
+        Image(systemName: symbol)
+            .font(.caption2)
+            .padding(4)
+            .background(.ultraThinMaterial, in: Circle())
+            .help(help)
+    }
+}

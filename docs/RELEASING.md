@@ -1,14 +1,17 @@
 # Releasing Keepers
 
-Releases are split across two workflows because Apple's notarization queue
-takes 1–4 hours per submission on this account, and holding a macOS runner
-during the wait would burn money for no reason.
+Everything runs in one workflow, `.github/workflows/build.yml`, on
+GitHub-hosted `macos-15` runners (free for this public repo):
 
-| Workflow | When | What it does |
+| Job | When | What it does |
 |---|---|---|
-| **Release (build + submit)** | On `vX.Y.Z` tag push, or manual | Matrix builds for x86_64 (`macos-13`) and arm64 (`macos-14`). Each arch: build, sign, submit to Apple, upload signed `.app` artifact. Exits in ~30–60 min. |
-| **Notarization status** | Manual, anytime | Calls `notarytool history` and `notarytool log` so you can ask Apple what state your submissions are in. Both arch submissions show up here. |
-| **Finalize release** | Manual, once Apple accepts BOTH archs | Matrix downloads each signed `.app`, staples, builds per-arch `.dmg`. A final job creates one GitHub Release with both `.dmg`s attached. ~20 min. |
+| **test** | Every PR, push to `main`, tag, and manual run | Runs the tests on Apple Silicon and on Intel under Rosetta. On PRs and `main`, also checks that a Release build is universal. |
+| **build** | `vX.Y.Z` tags and manual runs | Builds the universal (arm64 + x86_64) app, signs it, submits it to Apple, uploads the signed `.app`. |
+| **publish** | After **build** | Waits for Apple's verdict (up to 5.5 h), staples, builds `Keepers-X.Y.Z.dmg`. On a tag it creates the GitHub Release; on a manual run it only uploads the `.dmg` as an artifact. |
+
+There is one build for both architectures: Xcode compiles a universal
+binary, and `scripts/build_and_sign.sh` fails if any Mach-O in the bundle
+is missing a slice.
 
 ## Per-release flow
 
@@ -19,31 +22,35 @@ $EDITOR CHANGELOG.md
 # 2. Bump (writes VERSION, rewrites CHANGELOG, commits, creates tag).
 scripts/bump.sh patch    # or minor / major / 1.5.0
 
-# 3. Push commit + tag together. The tag push triggers the build workflow.
+# 3. Push commit + tag together. The tag starts test → build → publish.
 git push --follow-tags
 ```
 
-The build workflow runs two arch jobs in parallel and finishes in ~30–60 min.
-Each arch's job ends with a log message listing the inputs Finalize needs:
+When **publish** finishes, the GitHub Release exists with the `.dmg`
+attached. There is no manual step in between.
 
-```
-submission_id_x86_64: <uuid>     (from the macos-13 job)
-submission_id_arm64:  <uuid>     (from the macos-14 job)
-build_run_id:         <run id>   (same for both jobs)
-tag:                  v1.3.2
+### When Apple is slow
+
+Notarization on this account has taken from minutes to over 4 hours. If
+**publish** hits its timeout, open the run later and click **Re-run failed
+jobs**. Only **publish** runs again; it reuses the submission ID and the
+signed `.app` from **build**, so nothing is rebuilt or resubmitted. (Re-runs
+are possible for 14 days, the artifact retention.)
+
+To see what Apple is doing in the meantime, from any Mac:
+
+```bash
+xcrun notarytool history --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD"
+xcrun notarytool log <submission-id> --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD"
 ```
 
-Wait for Apple to Accept **both** submissions (check via Notarization status).
-Then open **Actions → Finalize release → Run workflow**, paste all four values,
-and run it. ~20 minutes later one GitHub Release exists with both .dmgs:
-`Keepers-1.3.2-x86_64.dmg` and `Keepers-1.3.2-arm64.dmg`.
+If Apple rejects the submission, **publish** fails and prints Apple's log.
 
 ### Dry runs
 
-Trigger the **Release (build + submit)** workflow manually (no tag needed)
-to test the bundling pipeline. The signed `.app` is uploaded as an artifact.
-You can then run **Finalize release** with an empty `tag` input to produce
-a `.dmg` artifact without publishing a GitHub Release.
+Run the **Build** workflow manually (**Actions → Build → Run workflow**) on
+any branch. It tests, builds, signs, notarizes, and uploads the `.dmg` as an
+artifact without creating a GitHub Release.
 
 ## One-time setup
 
@@ -108,7 +115,7 @@ scripts/build_dmg.sh
 Or split it the same way CI does, so you can walk away during the wait:
 
 ```bash
-scripts/build_and_sign.sh                                 # ~5 min
+scripts/build_and_sign.sh
 SUBMISSION_ID="$(scripts/submit_notarization.sh)"         # ~30 s
 echo "$SUBMISSION_ID"   # save this somewhere
 # ... walk away. Check periodically:
@@ -127,20 +134,24 @@ unlocked for the codesign tool. Re-check that the `set-key-partition-list`
 step ran and that `KEYCHAIN_PASSWORD` matches across all the steps.
 
 **"The signature of the binary is invalid."** Almost always a stale `.app`
-from a previous build. `rm -rf build dist` and rebuild. `build_dmg.sh` does
-this for you on every run.
+from a previous build. `rm -rf build dist` and rebuild. `build_and_sign.sh`
+does this for you on every run.
 
-**Notarization rejected with `Hardened Runtime` errors.** Check
-`Entitlements.plist` is being applied. Inspect with:
+**"Not universal: …" from `build_and_sign.sh`.** Something in the bundle was
+built for one architecture only. Today the bundle has a single executable
+built from source, so this means a newly added prebuilt binary or framework
+ships only one slice. Replace it with a universal build.
+
+**Notarization rejected with `Hardened Runtime` errors.** The app needs no
+entitlements. Check the signature has the runtime flag:
 ```bash
-codesign -d --entitlements - dist/Keepers.app
+codesign -dv dist/Keepers.app 2>&1 | grep flags   # expect "runtime"
 ```
-Every entry in the entitlements file must be present in that output.
 
 **Notarization is "In Progress" forever.** Apple occasionally backs up.
-`notarytool submit --wait` has its own timeout, but the workflow `timeout-minutes`
-will fail the job before that. Retry the release by deleting the tag locally
-and remotely (`git tag -d vX.Y.Z && git push origin :refs/tags/vX.Y.Z`), then
+Wait, then **Re-run failed jobs** on the run (see "When Apple is slow").
+Only if the submission is truly stuck, resubmit by deleting the tag locally
+and remotely (`git tag -d vX.Y.Z && git push origin :refs/tags/vX.Y.Z`) and
 re-tagging.
 
 **Tag/VERSION mismatch.** The workflow refuses to build if the pushed tag

@@ -27,10 +27,8 @@ APP_BUNDLE="dist/${APP_NAME}.app"
 # Honor an externally-set VERSION (e.g. from the finalize workflow when main
 # has moved past the release tag). Fall back to the in-tree VERSION file.
 VERSION="${VERSION:-$(cat VERSION | tr -d '[:space:]')}"
-# ARCH suffixes the .dmg name (e.g. Keepers-1.3.2-arm64.dmg). Empty for
-# the single-arch local case.
-ARCH="${ARCH:-}"
-DMG_NAME="${APP_NAME}-${VERSION}${ARCH:+-${ARCH}}.dmg"
+# One universal .dmg for Intel and Apple Silicon.
+DMG_NAME="${APP_NAME}-${VERSION}.dmg"
 
 if [[ ! -d "${APP_BUNDLE}" ]]; then
     echo "Missing ${APP_BUNDLE}. Restore the signed bundle before finalizing." >&2

@@ -1,0 +1,197 @@
+name: Build
+
+# One pipeline for everything:
+#   test    — every PR, push to main, tag, and manual run.
+#   build   — tags (v*) and manual runs: universal .app, signed, submitted
+#             to Apple for notarization.
+#   publish — waits for Apple, staples, builds the .dmg. On a tag it also
+#             creates the GitHub Release; a manual run only uploads the .dmg.
+#
+# If Apple takes longer than publish's timeout, use "Re-run failed jobs"
+# later: the build job's outputs and artifacts are kept, so nothing is
+# rebuilt or resubmitted.
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      # Vision's aesthetics API needs the macOS 15 SDK (Xcode 16+).
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate project
+        run: xcodegen generate --quiet
+
+      - name: Test (arm64)
+        run: |
+          xcodebuild test -project Keepers.xcodeproj -scheme Keepers \
+            -destination 'platform=macOS,arch=arm64' CODE_SIGNING_ALLOWED=NO | tail -n 20
+
+      - name: Test (x86_64 under Rosetta)
+        run: |
+          softwareupdate --install-rosetta --agree-to-license || true
+          xcodebuild test -project Keepers.xcodeproj -scheme Keepers \
+            -destination 'platform=macOS,arch=x86_64' CODE_SIGNING_ALLOWED=NO | tail -n 20
+
+      - name: Universal build check
+        if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
+        run: DEVELOPER_ID=- scripts/build_and_sign.sh
+
+  build:
+    needs: test
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    runs-on: macos-15
+    timeout-minutes: 45
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      submission_id: ${{ steps.submit.outputs.submission_id }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: version
+        run: |
+          FILE_VERSION="$(tr -d '[:space:]' < VERSION)"
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            TAG_VERSION="${GITHUB_REF_NAME#v}"
+            if [[ "$TAG_VERSION" != "$FILE_VERSION" ]]; then
+              echo "Tag $GITHUB_REF_NAME does not match VERSION file ($FILE_VERSION)." >&2
+              exit 1
+            fi
+          fi
+          echo "version=$FILE_VERSION" >> "$GITHUB_OUTPUT"
+
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Import Developer ID certificate
+        env:
+          P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+          P12_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_P12_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: scripts/ci_import_certificate.sh
+
+      - name: Build and sign (universal)
+        env:
+          DEVELOPER_ID: ${{ secrets.MACOS_DEVELOPER_ID }}
+        run: scripts/build_and_sign.sh
+
+      - name: Submit for notarization
+        id: submit
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          SUBMISSION_ID="$(scripts/submit_notarization.sh)"
+          echo "submission_id=$SUBMISSION_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Upload signed .app
+        run: tar -czf dist/Keepers-signed.tar.gz -C dist Keepers.app
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Keepers-${{ steps.version.outputs.version }}-signed-app
+          path: dist/Keepers-signed.tar.gz
+          retention-days: 14
+
+      - name: Clean up keychain
+        if: always()
+        run: security delete-keychain "$RUNNER_TEMP/build.keychain-db" 2>/dev/null || true
+
+  publish:
+    needs: build
+    runs-on: macos-15
+    # GitHub-hosted jobs are capped at 6 h; leave room after Apple's verdict.
+    timeout-minutes: 345
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install create-dmg
+        run: brew install create-dmg
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: Keepers-${{ needs.build.outputs.version }}-signed-app
+          path: dist/
+
+      - name: Unpack signed .app
+        run: tar -xzf dist/Keepers-signed.tar.gz -C dist && rm dist/Keepers-signed.tar.gz
+
+      - name: Import Developer ID certificate
+        env:
+          P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+          P12_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_P12_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: scripts/ci_import_certificate.sh
+
+      - name: Wait for Apple, staple, build .dmg
+        env:
+          SUBMISSION_ID: ${{ needs.build.outputs.submission_id }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          DEVELOPER_ID: ${{ secrets.MACOS_DEVELOPER_ID }}
+          NOTARY_TIMEOUT_SECONDS: "19800"
+        run: scripts/finalize_release.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Keepers-${{ env.VERSION }}-dmg
+          path: dist/Keepers-${{ env.VERSION }}.dmg
+          retention-days: 14
+
+      - name: Extract release notes from CHANGELOG
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          python3 - "$VERSION" > release-notes.md <<'PY'
+          import re, sys
+          version = sys.argv[1]
+          text = open("CHANGELOG.md").read()
+          pattern = rf"^## \[{re.escape(version)}\][^\n]*\n(.*?)(?=^## \[|\Z)"
+          m = re.search(pattern, text, flags=re.DOTALL | re.MULTILINE)
+          if not m:
+              sys.exit(f"No CHANGELOG section for [{version}]")
+          sys.stdout.write(m.group(1).strip() + "\n")
+          PY
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Keepers ${{ env.VERSION }}
+          body_path: release-notes.md
+          files: dist/Keepers-${{ env.VERSION }}.dmg
+          fail_on_unmatched_files: true
+
+      - name: Clean up keychain
+        if: always()
+        run: security delete-keychain "$RUNNER_TEMP/build.keychain-db" 2>/dev/null || true

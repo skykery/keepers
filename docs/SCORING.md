@@ -1,140 +1,93 @@
-# Scoring system
+# Scoring
 
-Keepers ranks each photo with a composite score in `[0, 1]`. The score blends what's in the picture (CLIP semantics), how it looks (LAION aesthetics), how it was captured (technical metrics), and — when people are present — how the faces look (sharpness, eyes, emotion). A scene-aware profile re-weights everything depending on whether the shot is a portrait, group, macro, landscape, or action frame.
+Keepers decides folders in two stages. **Analysis** measures each photo once and caches the numbers in `<folder>/.keepers/analysis.json`. **Culling** turns those numbers into folders. Culling is pure arithmetic, so changing the preset re-sorts instantly.
 
-## Final score formula
+Code: `KeepersCore/Sources/KeepersCore/` — `Analyzer.swift` (measurement), `Scoring.swift` (per-photo score), `Bursts.swift` (grouping), `Culler.swift` (folders).
+
+## Analysis
+
+Every photo is decoded once at 2048 px on the long edge. RAW files use the camera's embedded preview (about 0.3 s instead of about 9 s for a full RAW develop); a RAW+JPEG pair decodes the JPEG.
+
+| Measurement | How |
+|---|---|
+| Faces | Vision face detection with *face capture quality* (Apple's combined blur / lighting / pose / expression score). Faces smaller than 6% of the frame height, or under 40% of the largest face, are bystanders and ignored. |
+| Smile, closed eyes | Core Image face detector (`CIDetectorSmile`, `CIDetectorEyeBlink`), matched to Vision faces by overlap. |
+| Subject | Faces if any; otherwise Vision's attention saliency region; otherwise the central 70%. |
+| Focus energy | Gaussian-smoothed Laplacian, variance per tile, 90th-percentile tile (see below). Measured on the eye band of each subject face, else on the subject, and on the whole frame. |
+| Exposure | Fraction of pixels with any channel ≥ 250 (blown), fraction ≤ 8 (black), mean luminance of the subject. |
+| Aesthetics | macOS 15+: Vision `CalculateImageAestheticsScoresRequest`, `overallScore` mapped from −1…1 to 0…1. |
+| Similarity | Vision image feature print, compared by cosine distance. |
+| Capture time | EXIF `DateTimeOriginal` + `SubsecTimeOriginal`; file date if missing. |
+
+### Focus energy
+
+A sharp subject against a soft background is the normal case for portraits, so the metric looks for *the sharpest part* of a region rather than an average:
+
+1. 3×3 Gaussian blur so sensor noise doesn't read as detail.
+2. Laplacian (edge response).
+3. Variance of the Laplacian per tile (tiles of max(16 px, region/8)).
+4. The 90th-percentile tile is the region's focus energy.
+
+Eye bands are downscaled to at most 256 px wide first. Without this, a face that fills the frame has its detail spread over more pixels and reads as soft. Regions are never upscaled.
+
+Energy maps to sharpness with `1 − exp(−energy / 18)`: missed focus and motion blur sit under ~5 (sharpness < 0.25), in-focus eyes at 20–45 (0.67–0.92), busy textures like branches at 100+ (≈1). The curve saturates deliberately: past "in focus", more texture doesn't make a better photo.
+
+## Per-photo score
 
 ```
-base_weighted_score = (clip_score × 0.45)
-                    + (aesthetic_score × 0.25)
-                    + (technical_score × 0.30)
-
-combined_score = (base_weighted_score
-                 + emotion_bonus × 1.5
-                 + eye_contact_bonus) × adjusted_sharpness_penalty
+quality = (0.35 × sharpness + 0.20 × exposure + 0.45 × aesthetics) / (sum of weights present)
 ```
 
-### Veto logic
+Without an aesthetics score (macOS 13–14, no optional model), the remaining weights are renormalized instead of treating aesthetics as zero.
 
-| Condition | Effect |
-|-----------|--------|
-| `sharpness < 0.25` | `sharpness_penalty = sharpness / 0.25` |
-| `emotion_score > 0.9` | Sharpness penalty relaxed by 50% |
-| `overexposed_prob > 0.4` or `underexposed_prob > 0.4` | `final_score = min(final_score, 0.3)` |
+`exposure` is 1 for a well-exposed subject with little clipping. It ramps down as blown highlights go from 2% to 20% of the frame or black pixels from 10% to 50%, and loses up to half when the subject's mean luminance is outside 0.25–0.75.
 
-## Scene-dependent profiles
+**Flaws** keep a photo out of Top Picks but don't trash it:
 
-The scene classifier picks one of five profiles per photo. Each rebalances the weights and tweaks the veto rules.
+| Flaw | Effect |
+|---|---|
+| Main subject's eyes closed | quality × 0.7 |
+| Someone else in a group shot blinking | quality × 0.85 |
 
-| Scene Type   | Detection                       | Priority Weights                                                | Special Handling                |
-|--------------|---------------------------------|-----------------------------------------------------------------|---------------------------------|
-| **Portrait** | Single person, close-up         | 50% Face Sharp · 20% Emotion · 20% Composition · 10% Color      | Strict blink veto               |
-| **Group**    | 3+ people, events               | 40% Group Joy · 30% Focus Consistency · 20% Exposure · 10% Comp | Relaxed sharpness on joy        |
-| **Macro**    | Small objects, textures         | 60% Global Sharp · 30% Lighting/Texture · 10% Color             | Full-frame focus detection      |
-| **Landscape**| Wide shots, no people           | 40% Dynamic Range · 40% Composition · 20% Global Sharp          | Face/emotion disabled           |
-| **Action**   | Motion, sports                  | 35% Composition · 30% Exposure · 20% Motion Quality · 15% Color | Motion blur tolerance           |
+Face capture quality is **not** part of `quality`. Apple designed it for comparing shots of the same person, and it sits near 0.5 for most faces, so as an absolute signal it unfairly penalizes portraits against scenery. It is used to rank frames within a group (below).
 
-### Contextual veto adjustments
+## Hard gate → Trash
 
-- **Portrait**: Harsh blink detection — images with the subject blinking are heavily penalized.
-- **Action**: Sharpness penalty reduced by 60% to allow artistic motion blur.
-- **Group**: Sharpness threshold relaxed by 30% when everyone is smiling.
-- **Macro**: Sharpness measured across the entire frame to find the focus point.
+Only clear technical failures:
 
-Users can override the detected scene in the inspection sidebar; the score recomputes instantly.
+| Rule | Reason shown |
+|---|---|
+| Subject sharpness below the preset floor **and** nothing in the frame above 1.5× that floor | Out of focus |
+| More than 25% of pixels blown | Blown highlights |
+| More than 60% of pixels black | Severely underexposed |
 
-## CLIP score (45%)
+Vision's `isUtility` flag (screenshots, documents) is recorded but not used: in testing it flagged ordinary still-life photos.
 
-Contrastive pairs of positive and negative prompts, one pair per quality category:
+## Groups
 
-| Category    | Positive                            | Negative                       | Weight |
-|-------------|-------------------------------------|--------------------------------|--------|
-| Focus       | "tack sharp image"                  | "out of focus blurry photo"    | 25%    |
-| Exposure    | "perfectly exposed photograph"      | "overexposed", "underexposed"  | 25%    |
-| Composition | "rule of thirds composition"        | "poorly composed snapshot"     | 15%    |
-| Lighting    | "photograph with perfect lighting"  | "dark muddy unclear"           | 15%    |
-| Color       | "vibrant colors and contrast"       | "washed out faded"             | 10%    |
-| Quality     | "masterpiece with detail"           | "grainy noisy low quality"     | 10%    |
+Photos are sorted by capture time. Each photo joins the previous one's group when they are at most 1.5 s apart (a burst), or at most 30 s apart and their feature prints are within cosine distance 0.25 (a re-take of the same frame). Within a group, frames rank by `quality + 0.5 × face capture quality`.
 
-Per-category score = `positive_prob / (positive_prob + negative_prob)`.
+## Folders
 
-## Aesthetic score (25%)
+| Preset | Top Picks share | Pick quality floor | Out-of-focus floor (sharpness) |
+|---|---|---|---|
+| Strict | 5% | 0.50 | 0.30 |
+| Balanced | 10% | 0.42 | 0.20 |
+| Lenient | 20% | 0.35 | 0.12 |
 
-LAION Aesthetics Predictor — CLIP ViT-L/14 features fed into a small MLP trained on human aesthetic ratings.
+1. **Trash**: anything failing the gate.
+2. **Top Picks**: the best frame of each group, ranked by quality across groups; the top *share × usable photos* (at least 1) that clear the floor and have no flaws.
+3. **Moments**: for groups without a pick, the frame with the best face quality where the main subject is smiling, eyes open, face quality ≥ 0.45. Capped at the same count as Top Picks.
+4. **Review**: everything else. Reasons show the rank in the group ("#3 of 10 similar shots") or why a group leader missed ("Below the quality bar", "Outranked by other shots").
 
-## Technical score (30%)
+Folders you choose by hand are stored in `.keepers/placements.json` and always win. Press `U` to hand a photo back to the engine.
 
-| Metric         | How it's computed                                                              |
-|----------------|--------------------------------------------------------------------------------|
-| Sharpness      | **Top-K percentile Laplacian** — only the top 5% strongest edges contribute.   |
-| Face sharpness | **Eye-micro weighted** — 85% eye sharpness + 15% face sharpness.               |
-| Exposure       | RAW: histogram analysis. JPEG: brightness deviation.                            |
-| Contrast       | Standard deviation of luminance.                                                |
-| Color richness | Variance across RGB channels.                                                   |
-| Composition    | Rule of thirds analysis.                                                        |
+## Aesthetics
 
-### Wide-aperture (bokeh / DOF) handling
+On macOS 15 and later, aesthetics come from Vision with nothing to install.
 
-The sharpness algorithm is tuned for f/1.4–f/2.8 shots so background blur isn't mistaken for soft focus:
+On macOS 13–14 the app loads `~/Library/Application Support/Keepers/Models/KeepersAesthetics.mlmodelc` if present: CLIP ViT-B/32 + the LAION aesthetic predictor v1 linear head, built by `scripts/convert_aesthetics_model.py`. Its 1–10 rating maps to 0–1 over the 3.5–7.5 band real photos fall in. Without the model, those systems score on sharpness and exposure only.
 
-1. **Top-K percentile detection**: only the top 5% strongest Laplacian responses count, ignoring bokeh areas.
-2. **Signal-to-noise refinement**: `cv2.medianBlur(3)` is applied before the Laplacian to filter sensor noise.
-3. **Eye-micro sharpness**: MediaPipe landmarks crop tight regions around eyes and eyelashes for precise focus measurement.
-4. **Contrast weighting**: the result is multiplied by local contrast ratio to distinguish edges from noise.
-5. **Shallow-DOF detection**: when `mean_ratio > 3.0` (peak vs. global mean), the sharpness threshold auto-relaxes.
-6. **Resolution-independent**: peak values are normalized against an expected edge strength (50.0 = perfect sharpness).
+## Tuning
 
-Breakdown fields exposed in the UI: `bokeh_score`, `variance_ratio`, `mean_ratio`, `bokeh_threshold_relaxed`.
-
-## Face detection & emotion bonus
-
-- MediaPipe FaceLandmarker provides 468-point landmarks.
-- When faces are detected, `face_sharpness` replaces global `sharpness` in scoring.
-- Emotion bonus: up to **+10%** for smiling/laughing faces, detected via the CLIP emotion category.
-- Emotion rescue: if `emotion_score > 0.9`, sharpness penalty is relaxed by 50%.
-- Eye-contact bonus: up to **+8%** when subjects look at the camera.
-
-## Multi-face analysis (group photos)
-
-- Up to **5 faces** detected per image.
-- **Blink detection** via Eye Aspect Ratio (EAR = eye_height / eye_width). EAR < 0.35 indicates a blink; `blink_score = 1.0 - (EAR / 0.35)` per eye.
-- **Depth-priority sharpness**: per-face weight = `center_proximity × 0.6 + min(1.0, relative_size × 50) × 0.4`. Faces nearer the center and larger weigh more.
-- **Group emotion aggregation**:
-  - +20% social bonus if everyone is smiling and `face_count ≥ 3`.
-  - +15% social bonus if everyone is smiling and `face_count = 2`.
-
-### Nonlinear social scaling
-
-For group photos with strong emotional content, technical penalties soften:
-
-1. **Social multiplier**: `face_count > 2` + everyone smiling → 1.2× multiplier on base score.
-2. **Dynamic sharpness threshold**: `group_joy_score > 0.85` → sharpness threshold reduced by 30%.
-3. **Quality anchor boost**: primary subject (largest/central face) smiling deeply (>0.7) → surrounding faces boosted.
-4. **Technical penalty reduction**: `face_count ≥ 3` with high joy → technical penalties weighted at 70%.
-5. **Group emotion rescue**: sharpness penalty relaxed by 40% for high-joy group photos.
-
-The cumulative effect is reported in `breakdown.group_boost_factor`.
-
-#### Example
-
-A group photo with 3 smiling faces but soft focus:
-
-- Old logic: score ~0.38 (heavily penalized for softness).
-- New logic: score ~0.90 (emotion prioritized over technical perfection).
-
-### Blink penalty and primary subjects
-
-- Blink penalty applies when any face has `blink_score > 0.7`: `blink_penalty = 1.0 - (max_blink_risk - 0.7) × 0.5`.
-- Primary subjects = top 1/3 of faces by center proximity. They must have `sharpness > 0.4` to avoid the blur penalty.
-- The face gallery in the UI shows red borders for blink risk or look-away, green borders for high emotion.
-
-## Models
-
-| Model                  | Repo / file                                                                | Size    |
-|------------------------|----------------------------------------------------------------------------|---------|
-| CLIP ViT-B/32          | `openai/clip-vit-base-patch32`                                             | ~150 MB |
-| CLIP ViT-L/14          | `openai/clip-vit-large-patch14`                                            | ~890 MB |
-| LAION Aesthetics       | `sac+logos+ava1-l14-linearMSE.pth`                                         | ~4 MB   |
-| MediaPipe FaceLandmark | `face_landmarker.task` (float16)                                           | ~4 MB   |
-
-Downloaded once on first launch into `~/Library/Application Support/Keepers/models/`.
+`keepers-eval` (see the README) prints every signal per photo. Once you have sorted a few shoots by hand in the app, it also reports how often the engine's folder matches yours, so weight and threshold changes can be judged on real decisions.
