@@ -13,6 +13,14 @@ step for that.
 
 ### Added
 
+### Changed
+
+### Fixed
+
+## [2.3.0] - 2026-10-16
+
+### Added
+
 - Full-screen viewer (Space) with `Z` to zoom to 100% on the eyes or
   subject. RAW files whose embedded preview is smaller than the original
   are developed at full resolution in the background.
