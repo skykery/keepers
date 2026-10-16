@@ -13,7 +13,16 @@ step for that.
 
 ### Added
 
+- `docs/ROADMAP.md`: planned features.
+
 ### Changed
+
+- Weaker duplicates go to Trash instead of Review: frames that score lower
+  than the best of their group and rank beyond the preset's limit
+  (Strict 2, Balanced 3, Lenient 5 kept per group) or trail it by a set
+  gap. On the sample shoot, Balanced's Review went from 24 to 16 photos.
+- Top Picks shares raised: Balanced 10% → 15%, Lenient 20% → 25%.
+- A release now starts one CI run instead of two.
 
 ### Fixed
 

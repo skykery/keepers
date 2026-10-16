@@ -9,7 +9,7 @@ Built for photographers who come back from a shoot with 400 frames and need to f
 - **100% local.** Nothing uploads, nothing downloads. Your photos never leave your Mac.
 - **One universal app** for Apple Silicon and Intel, about 3 MB. No Python, no model downloads.
 - **RAW-aware**: ORF, NEF, DNG, CR2, CR3, ARW, RW2, RAF, plus JPG/HEIC/PNG/WebP/TIFF/BMP/GIF. RAW+JPEG pairs count as one photo.
-- **Bursts collapse.** Ten frames of the same moment yield one pick, and the rest are ranked next to it.
+- **Bursts collapse.** Ten frames of the same moment yield one pick, a couple of runner-ups to review, and the weaker rest in Trash.
 - **Originals are never modified.** Output folders contain symlinks back to your source files.
 
 Requires macOS 13 or later. Aesthetics scoring uses Vision's built-in model on macOS 15+; on 13–14 Keepers scores without it unless the optional model is installed (see [`docs/SCORING.md`](docs/SCORING.md#aesthetics)).
@@ -21,7 +21,7 @@ Download the latest `.dmg` from [Releases](https://github.com/skykery/keepers/re
 ## Quick start
 
 1. Choose (or drop) a folder of photos.
-2. Pick how selective to be: *Strict* (top 5%), *Balanced* (top 10%), or *Lenient* (top 20%).
+2. Pick how selective to be: *Strict* (top 5%), *Balanced* (top 15%), or *Lenient* (top 25%).
 3. Click **Start Culling**. Analysis runs at a few photos per second.
 4. Walk through the folders and move photos with one keystroke.
 
@@ -31,7 +31,7 @@ Photos land in four folders inside your source folder:
 Top Picks/   — the best frame of the strongest moments
 Moments/     — great expressions (smiling, eyes open) from moments that didn't make Top Picks
 Review/      — everything else, with similar shots grouped and ranked
-Trash/       — clear technical failures: out of focus, blown out, black
+Trash/       — out of focus, blown out, or black; plus weaker duplicates of a better frame
 ```
 
 Each folder contains symlinks back to the originals. Drag one out (to Lightroom, iCloud, a thumb drive) and macOS gives you the real file, not the shortcut.
@@ -82,7 +82,7 @@ Build a signed universal `.app` (requires an Apple Developer ID; use `-` for a l
 DEVELOPER_ID=- scripts/build_and_sign.sh
 ```
 
-Releases: [`docs/RELEASING.md`](docs/RELEASING.md). History: [`CHANGELOG.md`](CHANGELOG.md).
+Releases: [`docs/RELEASING.md`](docs/RELEASING.md). History: [`CHANGELOG.md`](CHANGELOG.md). Planned features: [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 ## Privacy
 

@@ -18,8 +18,28 @@ public enum Preset: String, CaseIterable, Codable, Identifiable, Sendable {
     public var pickFraction: Double {
         switch self {
         case .strict: return 0.05
-        case .balanced: return 0.10
-        case .lenient: return 0.20
+        case .balanced: return 0.15
+        case .lenient: return 0.25
+        }
+    }
+
+    /// Frames of a group kept for review; lower-ranked ones are duplicates
+    /// and go to Trash.
+    public var keepPerGroup: Int {
+        switch self {
+        case .strict: return 2
+        case .balanced: return 3
+        case .lenient: return 5
+        }
+    }
+
+    /// A frame scoring this far below its group's best goes to Trash, even
+    /// within `keepPerGroup`.
+    public var duplicateGap: Double {
+        switch self {
+        case .strict: return 0.03
+        case .balanced: return 0.05
+        case .lenient: return 0.08
         }
     }
 
@@ -75,7 +95,10 @@ public struct CullResult {
 /// 4. Moments: the best-expression frame of groups that didn't get a pick,
 ///    when the main subject is smiling with eyes open. Technical quality only
 ///    has to pass the gate: a great expression can be a little soft.
-/// 5. Everything else goes to Review, with its rank in its group.
+/// 5. Weaker duplicates go to Trash: frames that score below their group's
+///    best and either rank beyond the preset's `keepPerGroup` or trail the
+///    best by `duplicateGap` or more.
+/// 6. Everything else goes to Review, with its rank in its group.
 public enum Culler {
     public static func cull(_ analyses: [String: PhotoAnalysis], preset: Preset,
                             weights: ScoringWeights = .init(),
@@ -134,6 +157,12 @@ public enum Culler {
                 } else if moments.contains(name) {
                     folder = .moments
                     reasons.insert("Great expression", at: 0)
+                } else if i > 0, s.quality < scores[ids[0]]!.quality,
+                          i >= preset.keepPerGroup || scores[ids[0]]!.quality - s.quality >= preset.duplicateGap {
+                    // Only frames that also score lower than the best: a frame
+                    // ranked lower on face quality alone is not "weaker".
+                    folder = .trash
+                    reasons.insert("Weaker duplicate: #\(i + 1) of \(ids.count) similar shots", at: 0)
                 } else {
                     folder = .review
                     if ids.count > 1 {

@@ -69,16 +69,17 @@ Photos are sorted by capture time. Each photo joins the previous one's group whe
 
 ## Folders
 
-| Preset | Top Picks share | Pick quality floor | Out-of-focus floor (sharpness) |
-|---|---|---|---|
-| Strict | 5% | 0.50 | 0.30 |
-| Balanced | 10% | 0.42 | 0.20 |
-| Lenient | 20% | 0.35 | 0.12 |
+| Preset | Top Picks share | Pick quality floor | Out-of-focus floor (sharpness) | Frames kept per group | Duplicate gap |
+|---|---|---|---|---|---|
+| Strict | 5% | 0.50 | 0.30 | 2 | 0.03 |
+| Balanced | 15% | 0.42 | 0.20 | 3 | 0.05 |
+| Lenient | 25% | 0.35 | 0.12 | 5 | 0.08 |
 
 1. **Trash**: anything failing the gate.
 2. **Top Picks**: the best frame of each group, ranked by quality across groups; the top *share × usable photos* (at least 1) that clear the floor and have no flaws.
 3. **Moments**: for groups without a pick, the frame with the best face quality where the main subject is smiling, eyes open, face quality ≥ 0.45. Capped at the same count as Top Picks.
-4. **Review**: everything else. Reasons show the rank in the group ("#3 of 10 similar shots") or why a group leader missed ("Below the quality bar", "Outranked by other shots").
+4. **Trash, weaker duplicates**: a frame that scores lower than its group's best *and* either ranks beyond the preset's "frames kept per group" or trails the best by the "duplicate gap" or more. Reason: "Weaker duplicate: #5 of 10 similar shots". A frame that ranks lower only because of face quality, but scores at least as high, is never trashed.
+5. **Review**: everything else. Reasons show the rank in the group ("#3 of 10 similar shots") or why a group leader missed ("Below the quality bar", "Outranked by other shots").
 
 Folders you choose by hand are stored in `.keepers/placements.json` and always win. Press `U` to hand a photo back to the engine.
 

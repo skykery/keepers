@@ -50,10 +50,14 @@ final class CullingTests: XCTestCase {
         for i in 0..<10 { analyses["solo\(i)"] = Fixtures.analysis(date: 1000 + Double(i) * 100, aesthetics: 0.6 + Double(i) * 0.01) }
         let r = Culler.cull(analyses, preset: .balanced)
         let picks = r.decisions.filter { $0.value.folder == .picks }.keys.sorted()
-        XCTAssertEqual(picks, ["burst0", "solo9"])  // 10% of 20
+        XCTAssertEqual(picks, ["burst0", "solo8", "solo9"])  // 15% of 20
         XCTAssertEqual(r.decisions["burst1"]?.folder, .review)
         XCTAssertEqual(r.decisions["burst1"]?.rankInGroup, 2)
         XCTAssertTrue(r.decisions["burst1"]!.reasons.contains("#2 of 10 similar shots"))
+        // Balanced keeps the best 3 frames of a group; the rest are duplicates.
+        XCTAssertEqual(r.decisions["burst2"]?.folder, .review)
+        XCTAssertEqual(r.decisions["burst3"]?.folder, .trash)
+        XCTAssertEqual(r.decisions["burst3"]?.reasons.first, "Weaker duplicate: #4 of 10 similar shots")
     }
 
     func testPresetsChangePickCount() {
@@ -61,8 +65,33 @@ final class CullingTests: XCTestCase {
         for i in 0..<40 { analyses["p\(i)"] = Fixtures.analysis(date: Double(i) * 100, aesthetics: 0.5 + Double(i) * 0.01) }
         func picks(_ p: Preset) -> Int { Culler.cull(analyses, preset: p).decisions.values.filter { $0.folder == .picks }.count }
         XCTAssertEqual(picks(.strict), 2)
-        XCTAssertEqual(picks(.balanced), 4)
-        XCTAssertEqual(picks(.lenient), 8)
+        XCTAssertEqual(picks(.balanced), 6)
+        XCTAssertEqual(picks(.lenient), 10)
+    }
+
+    func testClearlyWorseDuplicateGoesToTrash() {
+        let analyses = [
+            "good": Fixtures.analysis(date: 0, aesthetics: 0.9),
+            "worse": Fixtures.analysis(date: 0.5, aesthetics: 0.75),  // 0.0675 lower: past balanced, within lenient
+            "close": Fixtures.analysis(date: 1.0, aesthetics: 0.88),  // within the gap
+        ]
+        let r = Culler.cull(analyses, preset: .balanced)
+        XCTAssertEqual(r.decisions["good"]?.folder, .picks)
+        XCTAssertEqual(r.decisions["close"]?.folder, .review)
+        XCTAssertEqual(r.decisions["worse"]?.folder, .trash)
+        XCTAssertEqual(Culler.cull(analyses, preset: .lenient).decisions["worse"]?.folder, .review)
+    }
+
+    func testDuplicateRankedLowerOnlyByFaceIsNotTrashed() {
+        // "c" scores highest but ranks last because of face quality.
+        var analyses: [String: PhotoAnalysis] = [:]
+        analyses["a"] = Fixtures.analysis(date: 0, aesthetics: 0.80, faces: [Fixtures.face(quality: 0.9)])
+        analyses["b"] = Fixtures.analysis(date: 0.3, aesthetics: 0.80, faces: [Fixtures.face(quality: 0.8)])
+        analyses["c"] = Fixtures.analysis(date: 0.6, aesthetics: 0.82, faces: [Fixtures.face(quality: 0.2)])
+        let r = Culler.cull(analyses, preset: .strict)
+        XCTAssertEqual(r.groups, [["a", "b", "c"]])
+        XCTAssertEqual(r.decisions["c"]?.rankInGroup, 3)
+        XCTAssertEqual(r.decisions["c"]?.folder, .review)
     }
 
     func testBlinkingFrameIsNeverAPick() {
