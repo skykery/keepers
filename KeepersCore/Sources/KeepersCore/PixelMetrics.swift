@@ -121,11 +121,51 @@ public enum PixelMetrics {
     /// are never upscaled.
     public static func focusEnergy(_ px: PixelBuffer, in region: NormRect = .full,
                                    maxSide: Int? = nil, percentile: Double = 0.9) -> Double {
+        guard let (lap, w, h) = laplacian(px, in: region, maxSide: maxSide) else { return 0 }
+        var variances = tileVariances(lap, w, h, tile: max(16, min(w, h) / 8)).map(\.variance)
+        guard !variances.isEmpty else { return 0 }
+        variances.sort()
+        return variances[min(variances.count - 1, Int(Double(variances.count) * percentile))]
+    }
+
+    /// Focus energy per tile over the whole frame, measured the same way as
+    /// `focusEnergy`: where the photo is sharp.
+    public struct FocusMap: Sendable {
+        public let columns: Int
+        public let rows: Int
+        /// Row-major, top row first.
+        public let energies: [Double]
+        /// Tile size and the measured image's size, in pixels, to place tiles.
+        public let tile: Int
+        public let imageWidth: Int
+        public let imageHeight: Int
+
+        /// Sharpness (0...1, as scored) of the tile at `column`, `row`.
+        public func sharpness(column: Int, row: Int) -> Double {
+            Scorer.sharpness(energies[row * columns + column])
+        }
+    }
+
+    public static func focusMap(_ px: PixelBuffer, tile: Int = 48) -> FocusMap {
+        guard let (lap, w, h) = laplacian(px, in: .full, maxSide: nil) else {
+            return FocusMap(columns: 0, rows: 0, energies: [], tile: tile, imageWidth: px.width, imageHeight: px.height)
+        }
+        let tiles = tileVariances(lap, w, h, tile: tile)
+        let columns = tiles.map(\.column).max().map { $0 + 1 } ?? 0
+        let rows = tiles.map(\.row).max().map { $0 + 1 } ?? 0
+        var energies = [Double](repeating: 0, count: columns * rows)
+        for t in tiles { energies[t.row * columns + t.column] = t.variance }
+        return FocusMap(columns: columns, rows: rows, energies: energies, tile: tile, imageWidth: px.width, imageHeight: px.height)
+    }
+
+    /// Gaussian-smoothed Laplacian of `region`, optionally downscaled so its
+    /// long side is at most `maxSide`.
+    private static func laplacian(_ px: PixelBuffer, in region: NormRect, maxSide: Int?) -> ([Float], Int, Int)? {
         let (x0, y0, x1, y1) = px.pixelRect(region)
         let rw = x1 - x0, rh = y1 - y0
         let scale = maxSide.map { min(1, Double($0) / Double(max(rw, rh))) } ?? 1
         let w = Int(Double(rw) * scale), h = Int(Double(rh) * scale)
-        guard w >= 8, h >= 8 else { return 0 }
+        guard w >= 8, h >= 8 else { return nil }
 
         var src = [Float](repeating: 0, count: w * h)
         var smooth = [Float](repeating: 0, count: w * h)
@@ -149,15 +189,18 @@ public enum PixelMetrics {
         }
         convolve(&src, into: &smooth, w, h, kernel: [1, 2, 1, 2, 4, 2, 1, 2, 1].map { $0 / 16 })
         convolve(&smooth, into: &lap, w, h, kernel: [0, -1, 0, -1, 4, -1, 0, -1, 0])
+        return (lap, w, h)
+    }
 
-        // Variance per tile, skipping the 1 px border the convolution extends.
-        let tile = max(16, min(w, h) / 8)
-        var variances: [Double] = []
+    /// Variance of the Laplacian per tile, skipping the 1 px border the
+    /// convolution extends.
+    private static func tileVariances(_ lap: [Float], _ w: Int, _ h: Int, tile: Int) -> [(column: Int, row: Int, variance: Double)] {
+        var result: [(column: Int, row: Int, variance: Double)] = []
         lap.withUnsafeBufferPointer { l in
-            var ty = 1
+            var ty = 1, row = 0
             while ty + 2 < h {
                 let tyEnd = min(ty + tile, h - 1)
-                var tx = 1
+                var tx = 1, column = 0
                 while tx + 2 < w {
                     let txEnd = min(tx + tile, w - 1)
                     let n = (tyEnd - ty) * (txEnd - tx)
@@ -165,22 +208,20 @@ public enum PixelMetrics {
                         var sum: Float = 0, sumSq: Float = 0
                         for y in ty..<tyEnd {
                             var rs: Float = 0, rq: Float = 0
-                            let row = l.baseAddress! + y * w + tx
-                            vDSP_sve(row, 1, &rs, vDSP_Length(txEnd - tx))
-                            vDSP_svesq(row, 1, &rq, vDSP_Length(txEnd - tx))
+                            let p = l.baseAddress! + y * w + tx
+                            vDSP_sve(p, 1, &rs, vDSP_Length(txEnd - tx))
+                            vDSP_svesq(p, 1, &rq, vDSP_Length(txEnd - tx))
                             sum += rs; sumSq += rq
                         }
                         let mean = Double(sum) / Double(n)
-                        variances.append(max(0, Double(sumSq) / Double(n) - mean * mean))
+                        result.append((column, row, max(0, Double(sumSq) / Double(n) - mean * mean)))
                     }
-                    tx += tile
+                    tx += tile; column += 1
                 }
-                ty += tile
+                ty += tile; row += 1
             }
         }
-        guard !variances.isEmpty else { return 0 }
-        variances.sort()
-        return variances[min(variances.count - 1, Int(Double(variances.count) * percentile))]
+        return result
     }
 
     private static func convolve(_ src: inout [Float], into dst: inout [Float], _ w: Int, _ h: Int, kernel: [Float]) {

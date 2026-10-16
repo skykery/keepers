@@ -110,6 +110,18 @@ public struct Analyzer {
         )
     }
 
+    /// Focus energy at full detail for burst ranking: the primary face's eye
+    /// band (or the subject) cropped from the largest available image and
+    /// measured without downscaling.
+    public func detailFocus(_ photo: Photo, analysis: PhotoAnalysis) throws -> Double {
+        let large = try ImageDecoder.decodeLarge(photo.decodeURL, full: false)
+        let region = (analysis.primaryFace?.rect.eyeBand ?? analysis.subject).clamped()
+        let w = Double(large.image.width), h = Double(large.image.height)
+        let crop = CGRect(x: region.x * w, y: region.y * h, width: region.width * w, height: region.height * h).integral
+        guard let cropped = large.image.cropping(to: crop), let px = PixelBuffer(cropped) else { return 0 }
+        return PixelMetrics.focusEnergy(px)
+    }
+
     /// The most prominent face counts double: in a group shot the person in
     /// front matters most, but someone soft at the side still costs points.
     static func weightedFaceFocus(_ faces: [PhotoAnalysis.Face]) -> Double {

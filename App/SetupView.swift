@@ -143,7 +143,8 @@ struct ProcessingView: View {
 
     var body: some View {
         VStack(spacing: 16) {
-            Text("Analyzing photos").font(.title2.weight(.semibold))
+            Text(model.progress.refining ? "Checking similar shots at full resolution" : "Analyzing photos")
+                .font(.title2.weight(.semibold))
             ProgressView(value: Double(model.progress.done), total: Double(max(model.progress.total, 1)))
                 .frame(width: 360)
             Text("\(model.progress.done) of \(model.progress.total)")

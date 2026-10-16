@@ -43,6 +43,10 @@ Changing the preset later re-sorts instantly, with no re-analysis. Photos you mo
 | Key            | Action                          |
 |----------------|---------------------------------|
 | `←` `→` `↑` `↓`| Move around the grid            |
+| `Space`        | Full-screen viewer              |
+| `Z`            | Zoom to 100% on the eyes or subject (full resolution) |
+| `C`            | Compare similar shots side by side, zoom linked |
+| `F`            | Show where the photo is sharp   |
 | `Return`       | Show / hide the details sidebar |
 | `P` or `1`     | Move to **Top Picks**           |
 | `R` or `2`     | Move to **Review**              |

@@ -22,6 +22,9 @@ public struct ScoringWeights: Codable, Hashable, Sendable {
     public var aesthetics = 0.45
     /// Added to quality (times face quality) when ranking frames of one group.
     public var faceInGroup = 0.5
+    /// Added (times detail focus relative to the group's sharpest frame) when
+    /// ranking frames of one group.
+    public var detailInGroup = 0.3
     public init() {}
 }
 

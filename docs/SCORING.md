@@ -65,7 +65,11 @@ Vision's `isUtility` flag (screenshots, documents) is recorded but not used: in 
 
 ## Groups
 
-Photos are sorted by capture time. Each photo joins the previous one's group when they are at most 1.5 s apart (a burst), or at most 30 s apart and their feature prints are within cosine distance 0.25 (a re-take of the same frame). Within a group, frames rank by `quality + 0.5 × face capture quality`.
+Photos are sorted by capture time. Each photo joins the previous one's group when they are at most 1.5 s apart (a burst), or at most 30 s apart and their feature prints are within cosine distance 0.25 (a re-take of the same frame). Within a group, frames rank by `quality + 0.5 × face capture quality`. Frames with a flaw (closed eyes, someone blinking) always rank after flawless ones.
+
+### Full-resolution check
+
+Analysis runs on 2048 px images, where a slightly missed focus can look sharp. After analysis, the top three frames of every multi-frame group are measured again on the largest available image: the camera's embedded preview (full size for NEF, 3200 px for ORF) or the JPEG of a RAW+JPEG pair. The eye band (or subject) is cropped and measured without downscaling. The result is only compared within the group, as `0.3 × detail / sharpest detail in the group` added to the rank. The winner gets the reason "Sharpest of its group at full resolution".
 
 ## Folders
 

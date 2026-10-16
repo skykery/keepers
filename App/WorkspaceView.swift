@@ -7,12 +7,19 @@ struct WorkspaceView: View {
     @State private var keyMonitor: Any?
 
     var body: some View {
-        HStack(spacing: 0) {
-            GalleryView()
-            if model.inspectorVisible, let item = model.selectedItem {
-                Divider()
-                InspectorView(item: item)
-                    .frame(width: 360)
+        ZStack {
+            HStack(spacing: 0) {
+                GalleryView()
+                if model.inspectorVisible, let item = model.selectedItem {
+                    Divider()
+                    InspectorView(item: item)
+                        .frame(width: 360)
+                }
+            }
+            switch model.viewer {
+            case .single: ViewerView()
+            case .compare: CompareView()
+            case nil: EmptyView()
             }
         }
         .toolbar {
@@ -56,26 +63,60 @@ struct WorkspaceView: View {
                   window.attachedSheet == nil, window.sheetParent == nil,
                   !(window.firstResponder is NSText)
             else { return event }
+            return handle(event) ? nil : event
+        }
+    }
+
+    /// Keys for the grid, the full-screen viewer, and compare.
+    private func handle(_ event: NSEvent) -> Bool {
+        let key = event.charactersIgnoringModifiers?.lowercased()
+        switch model.viewer {
+        case .some(let mode):
             switch event.keyCode {
-            case 123: model.step(-1); return nil                   // ←
-            case 124: model.step(1); return nil                    // →
-            case 126: model.step(-model.gridColumns); return nil   // ↑
-            case 125: model.step(model.gridColumns); return nil    // ↓
-            case 36, 76: model.inspectorVisible.toggle(); return nil  // Return
-            case 53: model.inspectorVisible = false; return nil    // Esc
-            case 51, 117: model.moveSelection(to: .trash); return nil  // Delete
+            case 53: model.closeViewer(); return true                          // Esc
+            case 49: if mode == .single { model.closeViewer() }; return true    // Space
+            case 123: mode == .compare ? model.stepCompare(-1) : model.step(-1); return true
+            case 124: mode == .compare ? model.stepCompare(1) : model.step(1); return true
+            case 51, 117: model.moveSelection(to: .trash); return true
             default: break
             }
-            switch event.charactersIgnoringModifiers?.lowercased() {
-            case "p", "1": model.moveSelection(to: .picks)
-            case "r", "2": model.moveSelection(to: .review)
-            case "m", "3": model.moveSelection(to: .moments)
-            case "x": model.moveSelection(to: .trash)
-            case "u", "0": model.moveSelection(to: nil)
-            default: return event
+            switch key {
+            case "z": model.zoomActual.toggle(); return true
+            case "f": model.showFocusMap.toggle(); return true
+            case "c": mode == .compare ? model.closeViewer() : model.openViewer(.compare); return true
+            default: return moveKey(key)
             }
-            return nil
+        case nil:
+            switch event.keyCode {
+            case 123: model.step(-1); return true                   // ←
+            case 124: model.step(1); return true                    // →
+            case 126: model.step(-model.gridColumns); return true   // ↑
+            case 125: model.step(model.gridColumns); return true    // ↓
+            case 36, 76: model.inspectorVisible.toggle(); return true  // Return
+            case 53: model.inspectorVisible = false; return true    // Esc
+            case 49: model.openViewer(.single); return true         // Space
+            case 51, 117: model.moveSelection(to: .trash); return true  // Delete
+            default: break
+            }
+            switch key {
+            case "z": model.openViewer(.single, zoomed: true); return true
+            case "c": model.openViewer(.compare); return true
+            case "f": model.showFocusMap.toggle(); return true
+            default: return moveKey(key)
+            }
         }
+    }
+
+    private func moveKey(_ key: String?) -> Bool {
+        switch key {
+        case "p", "1": model.moveSelection(to: .picks)
+        case "r", "2": model.moveSelection(to: .review)
+        case "m", "3": model.moveSelection(to: .moments)
+        case "x": model.moveSelection(to: .trash)
+        case "u", "0": model.moveSelection(to: nil)
+        default: return false
+        }
+        return true
     }
 }
 

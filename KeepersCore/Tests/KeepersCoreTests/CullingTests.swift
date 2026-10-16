@@ -94,6 +94,26 @@ final class CullingTests: XCTestCase {
         XCTAssertEqual(r.decisions["c"]?.folder, .review)
     }
 
+    func testDetailFocusPicksTheSharpestFrameOfABurst() {
+        var a = Fixtures.analysis(date: 0, aesthetics: 0.80); a.detailFocus = 10
+        var b = Fixtures.analysis(date: 0.3, aesthetics: 0.81); b.detailFocus = 40
+        let r = Culler.cull(["a": a, "b": b], preset: .balanced)
+        XCTAssertEqual(r.groups, [["b", "a"]])
+        XCTAssertEqual(r.decisions["b"]?.folder, .picks)
+        XCTAssertTrue(r.decisions["b"]!.reasons.contains("Sharpest of its group at full resolution"))
+        // Without the measurement, the higher aesthetics alone decide.
+        a.detailFocus = nil; b.detailFocus = nil; a.aesthetics = 0.82
+        XCTAssertEqual(Culler.cull(["a": a, "b": b], preset: .balanced).groups, [["a", "b"]])
+    }
+
+    func testFlawedFrameRanksBelowFlawlessOnes() {
+        var blink = Fixtures.analysis(date: 0, aesthetics: 0.95, faces: [Fixtures.face(quality: 0.9, eyesClosed: true)])
+        blink.detailFocus = 100
+        var open = Fixtures.analysis(date: 0.3, aesthetics: 0.6, faces: [Fixtures.face(quality: 0.3)])
+        open.detailFocus = 5
+        XCTAssertEqual(Culler.cull(["blink": blink, "open": open], preset: .balanced).groups, [["open", "blink"]])
+    }
+
     func testBlinkingFrameIsNeverAPick() {
         let analyses = [
             "blink": Fixtures.analysis(date: 0, aesthetics: 0.95, faces: [Fixtures.face(eyesClosed: true)]),

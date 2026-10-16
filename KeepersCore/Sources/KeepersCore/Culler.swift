@@ -110,12 +110,26 @@ public enum Culler {
         let byDate = grouper.group(usable.map {
             BurstGrouper.Item(id: $0, date: analyses[$0]!.captureDate, print: analyses[$0]!.featurePrint)
         })
+        // Frames with a flaw (closed eyes…) rank after every flawless frame
+        // of their group, whatever their other signals.
         func rankKey(_ name: String) -> Double {
             let s = scores[name]!
-            return s.quality + (s.face ?? 0) * weights.faceInGroup
+            return s.quality + (s.face ?? 0) * weights.faceInGroup - (s.flaws.isEmpty ? 0 : 10)
         }
-        let groups = byDate.map { ids in
-            ids.sorted { (rankKey($0), $1) > (rankKey($1), $0) }
+        // Within a group, the full-detail focus check counts too, relative
+        // to the group's sharpest measured frame.
+        var detailLeaders = Set<String>()
+        let groups: [[String]] = byDate.map { ids in
+            let measured = ids.compactMap { analyses[$0]!.detailFocus }
+            guard measured.count >= 2, let best = measured.max(), best > 0 else {
+                return ids.sorted { (rankKey($0), $1) > (rankKey($1), $0) }
+            }
+            func key(_ n: String) -> Double {
+                rankKey(n) + (analyses[n]!.detailFocus.map { $0 / best } ?? 0) * weights.detailInGroup
+            }
+            let sorted = ids.sorted { (key($0), $1) > (key($1), $0) }
+            if analyses[sorted[0]]!.detailFocus == best { detailLeaders.insert(sorted[0]) }
+            return sorted
         }
 
         var decisions: [String: Decision] = [:]
@@ -173,6 +187,7 @@ public enum Culler {
                                        : "Good, but outranked by other shots")
                     }
                 }
+                if detailLeaders.contains(name), folder != .trash { reasons.append("Sharpest of its group at full resolution") }
                 decisions[name] = Decision(folder: folder, reasons: reasons, group: g, rankInGroup: i + 1, groupSize: ids.count)
             }
         }

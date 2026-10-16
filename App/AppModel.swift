@@ -55,6 +55,11 @@ final class AppModel: ObservableObject {
     @Published var inspectorVisible = true
     @Published var showFailures = false
     @Published private(set) var failures: [String: String] = [:]
+    /// Full-screen viewer, and whether it compares a group side by side.
+    enum Viewer { case single, compare }
+    @Published var viewer: Viewer?
+    @Published var zoomActual = false
+    @Published var showFocusMap = false
     @Published private(set) var canUndo = false
     @Published private(set) var canRedo = false
     /// Columns in the gallery grid, for ↑ / ↓. Set by the gallery's layout.
@@ -84,6 +89,39 @@ final class AppModel: ObservableObject {
     func item(_ name: String) -> PhotoItem? { index[name].map { items[$0] } }
 
     var selectedItem: PhotoItem? { selection.flatMap(item) }
+
+    /// Up to four frames of the selected photo's group for side-by-side
+    /// comparison: the best ones, always including the selection.
+    var compareItems: [PhotoItem] {
+        let group = groupOfSelection
+        guard group.count > 1 else { return selectedItem.map { [$0] } ?? [] }
+        var frames = Array(group.prefix(4))
+        if let selected = selectedItem, !frames.contains(selected) { frames[frames.count - 1] = selected }
+        return frames
+    }
+
+    // MARK: Viewer
+
+    func openViewer(_ mode: Viewer, zoomed: Bool = false) {
+        guard selectedItem != nil else { return }
+        if mode == .compare, groupOfSelection.count < 2 { NSSound.beep(); return }
+        viewer = mode
+        zoomActual = zoomed
+    }
+
+    func closeViewer() {
+        viewer = nil
+        zoomActual = false
+        // Compare can select a frame from another folder; show it there.
+        if let name = selection, let item = item(name), item.folder != tab { tab = item.folder }
+    }
+
+    /// In compare, ← → move between the compared frames instead of the tab.
+    func stepCompare(_ delta: Int) {
+        let frames = compareItems.map(\.id)
+        guard let i = frames.firstIndex(where: { $0 == selection }) else { selection = frames.first; return }
+        selection = frames[max(0, min(frames.count - 1, i + delta))]
+    }
 
     /// Frames of the selected photo's group, best first.
     var groupOfSelection: [PhotoItem] {
@@ -234,7 +272,8 @@ final class AppModel: ObservableObject {
         }
     }
 
-    /// Moves the selected photo by hand and advances to the next one in the tab.
+    /// Moves the selected photo by hand. In the grid and viewer, selection
+    /// advances to the next photo in the tab; in compare it stays put.
     func moveSelection(to folder: Folder?) {
         guard let session, let item = selectedItem else { return }
         let before = session.store.placements[item.id]
@@ -245,7 +284,7 @@ final class AppModel: ObservableObject {
         undoStack.append(Move(name: item.id, before: before, after: folder))
         redoStack = []
         updateUndoState()
-        if self.item(item.id)?.folder != tab {
+        if viewer != .compare, self.item(item.id)?.folder != tab {
             let remaining = names[tab] ?? []
             selection = remaining.isEmpty ? nil : remaining[min(position, remaining.count - 1)]
         }

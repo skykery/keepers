@@ -6,8 +6,10 @@ public final class CullSession {
         public var done: Int
         public var total: Int
         public var current: String?
-        public init(done: Int, total: Int, current: String?) {
-            self.done = done; self.total = total; self.current = current
+        /// True while checking burst frames at full resolution.
+        public var refining: Bool
+        public init(done: Int, total: Int, current: String?, refining: Bool = false) {
+            self.done = done; self.total = total; self.current = current; self.refining = refining
         }
     }
 
@@ -68,6 +70,48 @@ public final class CullSession {
                 // per N photos: a large shoot's cache is tens of MB.
                 if Date().timeIntervalSince(lastSave) > 10 { try? store.saveAnalyses(); lastSave = Date() }
                 progress(Progress(done: done, total: total, current: photo.name))
+                enqueue()
+            }
+        }
+        try store.saveAnalyses()
+        try await refineBursts(analyzer: analyzer, progress: progress)
+    }
+
+    /// Measures the top frames of every multi-frame group at full detail
+    /// (`PhotoAnalysis.detailFocus`), so the sharpest frame of a burst wins.
+    /// Few photos and memory-heavy (large images), so it runs two at a time.
+    func refineBursts(analyzer: Analyzer, progress: @escaping (Progress) -> Void) async throws {
+        let gate = Preset.balanced.gate
+        let scores = analyses.mapValues { Scorer.score($0, gate: gate) }
+        let groups = BurstGrouper().group(analyses.map {
+            BurstGrouper.Item(id: $0.key, date: $0.value.captureDate, print: $0.value.featurePrint)
+        })
+        func key(_ n: String) -> Double { scores[n]!.quality + (scores[n]!.face ?? 0) * ScoringWeights().faceInGroup }
+        let todo = groups.filter { $0.count > 1 }
+            .flatMap { $0.sorted { key($0) > key($1) }.prefix(3) }
+            .filter { analyses[$0]?.detailFocus == nil }
+            .compactMap { photosByName[$0] }
+        guard !todo.isEmpty else { return }
+
+        let snapshot = analyses
+        var done = 0
+        progress(Progress(done: 0, total: todo.count, current: nil, refining: true))
+        try await withThrowingTaskGroup(of: (Photo, Double?).self) { group in
+            var queue = todo[...]
+            func enqueue() {
+                guard let photo = queue.popFirst(), let a = snapshot[photo.name] else { return }
+                group.addTask { (photo, try? analyzer.detailFocus(photo, analysis: a)) }
+            }
+            for _ in 0..<2 { enqueue() }
+            while let (photo, value) = try await group.next() {
+                try Task.checkCancellation()
+                if let value, var a = analyses[photo.name] {
+                    a.detailFocus = value
+                    analyses[photo.name] = a
+                    store.setAnalysis(a, for: photo)
+                }
+                done += 1
+                progress(Progress(done: done, total: todo.count, current: photo.name, refining: true))
                 enqueue()
             }
         }

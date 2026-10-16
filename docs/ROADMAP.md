@@ -4,18 +4,6 @@ Ideas for Keepers after 2.0, grouped by theme and roughly ordered by value withi
 
 When an item ships, move it to `CHANGELOG.md` and delete it here.
 
-## Seeing what you're judging
-
-Scores are measured on a 2048 px preview, and the eye is still the final judge.
-
-| Feature | Why | Size |
-|---|---|---|
-| 100% loupe | Press `Z` or click to see the eyes (or subject) at full resolution. The single most-used tool when culling, and the only way to catch focus misses that look sharp at preview size. | M |
-| Compare view | Show 2–4 frames of a burst side by side with synced zoom and pan, so you choose between near-identical shots directly instead of one at a time. | M |
-| Focus map overlay | Tint the tiles that `PixelMetrics.focusEnergy` found sharp. Shows at a glance whether focus landed on the eyes or the ear. The data is already computed. | S |
-| Full-screen preview | Spacebar for a full-window preview like Quick Look, with the same move keys. | S |
-| Full-resolution sharpness for finalists | Re-measure Top Picks and group leaders at full resolution so slight misses don't reach Top Picks. Costs a full RAW decode only for the few photos that matter. | M |
-
 ## Smarter culling
 
 Situations the current engine handles wrongly or not at all.

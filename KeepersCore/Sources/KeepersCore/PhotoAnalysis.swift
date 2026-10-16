@@ -35,6 +35,10 @@ public struct PhotoAnalysis: Codable, Hashable, Sendable {
 
     public var faces: [Face]
     public var featurePrint: FeaturePrint?
+    /// Focus energy of the eye band (or subject) measured on the largest
+    /// available image without downscaling. Only meaningful compared with
+    /// other frames of the same burst; measured for each group's top frames.
+    public var detailFocus: Double?
 
     public var subjectFaces: [Face] { faces.filter(\.isSubject) }
 

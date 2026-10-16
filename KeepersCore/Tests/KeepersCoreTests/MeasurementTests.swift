@@ -12,6 +12,28 @@ final class MeasurementTests: XCTestCase {
         XCTAssertGreaterThan(Scorer.sharpness(e[0]), 0.9)
     }
 
+    func testFocusMapFindsTheSharpHalf() {
+        let w = 512, h = 256
+        let a = PixelBuffer(Fixtures.checkerboard(width: w, height: h))!
+        let b = PixelBuffer(Fixtures.checkerboard(width: w, height: h, blurRadius: 6))!
+        var mixed = [UInt8](repeating: 0, count: w * h)
+        for y in 0..<h { for x in 0..<w { mixed[y * w + x] = UInt8(x < w / 2 ? a.luma[y * w + x] : b.luma[y * w + x]) } }
+        let map = PixelMetrics.focusMap(PixelBuffer(Fixtures.gray(mixed, w, h))!, tile: 64)
+        XCTAssertEqual(map.columns, 8)
+        XCTAssertEqual(map.rows, 4)
+        XCTAssertGreaterThan(map.sharpness(column: 1, row: 1), 0.9)
+        XCTAssertLessThan(map.sharpness(column: 6, row: 1), 0.5)
+    }
+
+    func testDecodeLargeReturnsFullResolutionForJPEG() throws {
+        let dir = try Fixtures.tempDirectory()
+        let url = try Fixtures.writeJPEG(Fixtures.checkerboard(width: 900, height: 600), to: dir.appendingPathComponent("a.jpg"))
+        let large = try ImageDecoder.decodeLarge(url, full: false)
+        XCTAssertEqual(large.image.width, 900)
+        XCTAssertEqual(large.nativeSize, CGSize(width: 900, height: 600))
+        XCTAssertTrue(large.isFullResolution)
+    }
+
     func testFocusEnergyOfFlatImageIsZero() {
         XCTAssertEqual(PixelMetrics.focusEnergy(PixelBuffer(Fixtures.flat(value: 128))!), 0, accuracy: 1e-6)
     }

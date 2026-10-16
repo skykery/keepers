@@ -4,13 +4,26 @@ import SwiftUI
 struct InspectorView: View {
     @EnvironmentObject private var model: AppModel
     let item: PhotoItem
+    @State private var focusMap: PixelMetrics.FocusMap?
+
+    private var aspect: CGFloat {
+        guard let a = item.analysis, a.pixelHeight > 0 else { return 1.5 }
+        return CGFloat(a.pixelWidth) / CGFloat(a.pixelHeight)
+    }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 PhotoImage(photo: item.photo, size: 1600, contentMode: .fit)
-                    .frame(maxWidth: .infinity, minHeight: 160, maxHeight: 280)
+                    .aspectRatio(aspect, contentMode: .fit)
+                    .overlay { if model.showFocusMap, let focusMap { FocusOverlay(map: focusMap) } }
                     .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .frame(maxWidth: .infinity, minHeight: 160, maxHeight: 280)
+                    .onTapGesture { model.openViewer(.single) }
+                    .help("Click or press Space for full screen, Z for 100%, F for the focus map")
+                    .task(id: "\(item.id)#\(model.showFocusMap)") {
+                        focusMap = model.showFocusMap ? await ImageCache.shared.focusMap(for: item.photo) : nil
+                    }
 
                 header
                 folderButtons

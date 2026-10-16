@@ -13,9 +13,25 @@ step for that.
 
 ### Added
 
+- Full-screen viewer (Space) with `Z` to zoom to 100% on the eyes or
+  subject. RAW files whose embedded preview is smaller than the original
+  are developed at full resolution in the background.
+- Compare (`C`): up to four similar shots side by side, scroll and pinch
+  linked; each frame zooms on its own subject. Move keys and undo work
+  inside compare.
+- Focus overlay (`F`): green where the photo is sharp, in the sidebar and
+  the viewer.
+- Full-resolution check of each burst's top three frames; the sharpest
+  wins ties ("Sharpest of its group at full resolution").
+
 ### Changed
 
+- Within a group, frames with a flaw (closed eyes) rank after flawless ones.
+
 ### Fixed
+
+- Releases no longer fail when Apple's notarization ticket isn't
+  fetchable yet: stapling retries for up to 3 minutes.
 
 ## [2.2.0] - 2026-10-16
 
@@ -149,7 +165,12 @@ Intel, built on one GitHub-hosted runner.
 
 ### Changed
 
+- Within a group, frames with a flaw (closed eyes) rank after flawless ones.
+
 ### Fixed
+
+- Releases no longer fail when Apple's notarization ticket isn't
+  fetchable yet: stapling retries for up to 3 minutes.
 
 ## [1.3.1] - 2026-06-19
 

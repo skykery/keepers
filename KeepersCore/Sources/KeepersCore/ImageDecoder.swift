@@ -34,6 +34,45 @@ public enum ImageDecoder {
         return DecodedImage(image: image, captureDate: captureDate(source))
     }
 
+    /// An image for looking at closely, and how it relates to the original.
+    public struct LargeImage {
+        public let image: CGImage
+        /// Upright pixel size of the original.
+        public let nativeSize: CGSize
+        /// True when `image` has the original's full resolution.
+        public var isFullResolution: Bool { Double(max(image.width, image.height)) >= Double(max(nativeSize.width, nativeSize.height)) * 0.98 }
+    }
+
+    /// The largest image available quickly, or with `full`, the original at
+    /// full resolution.
+    ///
+    /// For RAW files the quick image is the embedded preview at its own size:
+    /// full resolution on many cameras (NEF), smaller on others (ORF previews
+    /// are 3200 px). `full` develops the RAW, which can take seconds.
+    public static func decodeLarge(_ url: URL, full: Bool) throws -> LargeImage {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let w = props[kCGImagePropertyPixelWidth] as? Int, let h = props[kCGImagePropertyPixelHeight] as? Int
+        else { throw Failure.unreadable(url) }
+        let orientation = props[kCGImagePropertyOrientation] as? Int ?? 1
+        let native = orientation >= 5 ? CGSize(width: h, height: w) : CGSize(width: w, height: h)
+
+        var options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+        ]
+        if full || !PhotoFormats.isRaw(url) {
+            options[kCGImageSourceCreateThumbnailFromImageAlways] = true
+            options[kCGImageSourceThumbnailMaxPixelSize] = max(w, h)
+        } else {
+            options[kCGImageSourceCreateThumbnailFromImageIfAbsent] = true
+        }
+        guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {
+            throw Failure.unreadable(url)
+        }
+        return LargeImage(image: image, nativeSize: native)
+    }
+
     static func thumbnail(_ source: CGImageSource, maxPixelSize: Int, forceFullDecode: Bool) -> CGImage? {
         let options: [CFString: Any] = [
             forceFullDecode ? kCGImageSourceCreateThumbnailFromImageAlways

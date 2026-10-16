@@ -71,8 +71,20 @@ while true; do
     esac
 done
 
+# Apple's ticket can take a minute to become fetchable after "Accepted";
+# stapler then fails (error 68). Retry instead of failing the release.
+staple_with_retry() {
+    local target="$1" attempt
+    for attempt in 1 2 3 4 5 6; do
+        if xcrun stapler staple "${target}"; then return 0; fi
+        echo "    staple attempt ${attempt} failed; retrying in 30 s" >&2
+        sleep 30
+    done
+    return 1
+}
+
 echo "==> 2/3 Stapling ticket to ${APP_BUNDLE}"
-xcrun stapler staple "${APP_BUNDLE}"
+staple_with_retry "${APP_BUNDLE}"
 
 echo "==> 3/3 Building .dmg"
 if ! command -v create-dmg >/dev/null 2>&1; then
@@ -135,7 +147,7 @@ if [[ "${STAPLE_DMG:-0}" == "1" ]]; then
                 ;;
         esac
     done
-    xcrun stapler staple "dist/${DMG_NAME}"
+    staple_with_retry "dist/${DMG_NAME}"
 fi
 
 echo ""
