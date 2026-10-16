@@ -70,6 +70,15 @@ final class MeasurementTests: XCTestCase {
         XCTAssertNil(a.distance(to: FeaturePrint(revision: 1, vector: [1, 0, 0])))
     }
 
+    func testFeaturePrintCodableRoundTripAndLegacyFormat() throws {
+        let fp = FeaturePrint(revision: 2, vector: [0.5, -1.25, 3])
+        let data = try JSONEncoder().encode(fp)
+        XCTAssertFalse(String(decoding: data, as: UTF8.self).contains("vector"))
+        XCTAssertEqual(try JSONDecoder().decode(FeaturePrint.self, from: data), fp)
+        let legacy = #"{"revision":2,"vector":[0.5,-1.25,3]}"#.data(using: .utf8)!
+        XCTAssertEqual(try JSONDecoder().decode(FeaturePrint.self, from: legacy), fp)
+    }
+
     func testExifDateParsing() {
         let d = ImageDecoder.parseExifDate("2025:02:24 12:19:28", subseconds: "30")!
         let base = ImageDecoder.parseExifDate("2025:02:24 12:19:28", subseconds: nil)!

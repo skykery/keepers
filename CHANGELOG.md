@@ -13,9 +13,25 @@ step for that.
 
 ### Added
 
+- ⌘Z / ⇧⌘Z undo and redo for moves (Edit menu).
+- ↑ / ↓ move a row in the grid.
+- Recent folders on the start screen and in File → Open Recent.
+- Files that can't be read are listed in a sheet (from the bar under the
+  grid) with the reason and "Show in Finder".
+
 ### Changed
 
+- Symlinks are relative (`../IMG_001.ORF`), so results survive moving or
+  renaming the shoot folder or the drive. Links from 2.0–2.1 are
+  converted on the next open.
+- Large shoots: a manual move touches only that photo's links (about 5 ms
+  at 3,000 photos), the analysis cache is half the size, and it's saved
+  every 10 s instead of every 25 photos. Reopening a 3,000-photo shoot
+  takes under 2 s.
+
 ### Fixed
+
+- Keyboard shortcuts no longer act on the gallery while a sheet is open.
 
 ## [2.1.0] - 2026-10-16
 

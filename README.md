@@ -34,7 +34,7 @@ Review/      — everything else, with similar shots grouped and ranked
 Trash/       — out of focus, blown out, or black; plus weaker duplicates of a better frame
 ```
 
-Each folder contains symlinks back to the originals. Drag one out (to Lightroom, iCloud, a thumb drive) and macOS gives you the real file, not the shortcut.
+Each folder contains symlinks back to the originals. Drag one out (to Lightroom, iCloud, a thumb drive) and macOS gives you the real file, not the shortcut. The links are relative, so they keep working if you move or rename the shoot folder or the drive it's on.
 
 Changing the preset later re-sorts instantly, with no re-analysis. Photos you moved by hand stay where you put them.
 
@@ -42,7 +42,7 @@ Changing the preset later re-sorts instantly, with no re-analysis. Photos you mo
 
 | Key            | Action                          |
 |----------------|---------------------------------|
-| `←` `→`        | Previous / next photo           |
+| `←` `→` `↑` `↓`| Move around the grid            |
 | `Return`       | Show / hide the details sidebar |
 | `P` or `1`     | Move to **Top Picks**           |
 | `R` or `2`     | Move to **Review**              |
@@ -50,6 +50,7 @@ Changing the preset later re-sorts instantly, with no re-analysis. Photos you mo
 | `X` or `Delete`| Move to **Trash**               |
 | `U` or `0`     | Back to the automatic folder    |
 | `Esc`          | Close the sidebar               |
+| `⌘Z` / `⇧⌘Z`   | Undo / redo a move              |
 | `⌘O`           | Open another folder             |
 
 ## How the scoring works

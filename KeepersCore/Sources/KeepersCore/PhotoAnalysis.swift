@@ -55,6 +55,32 @@ public struct FeaturePrint: Codable, Hashable, Sendable {
     public var revision: Int
     public var vector: [Float]
 
+    public init(revision: Int, vector: [Float]) {
+        self.revision = revision
+        self.vector = vector
+    }
+
+    // Stored as raw float bytes (base64 in JSON): about a third the size of a
+    // number array, which dominates the cache file. Caches from 2.0–2.1 used
+    // the number array and still decode.
+    private enum CodingKeys: String, CodingKey { case revision, data, vector }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        revision = try c.decode(Int.self, forKey: .revision)
+        if let data = try c.decodeIfPresent(Data.self, forKey: .data) {
+            vector = data.withUnsafeBytes { Array($0.bindMemory(to: Float.self)) }
+        } else {
+            vector = try c.decode([Float].self, forKey: .vector)
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(revision, forKey: .revision)
+        try c.encode(vector.withUnsafeBufferPointer { Data(buffer: $0) }, forKey: .data)
+    }
+
     /// Cosine distance, 0 (identical) ... 2.
     public func distance(to other: FeaturePrint) -> Double? {
         guard revision == other.revision, vector.count == other.vector.count, !vector.isEmpty else { return nil }

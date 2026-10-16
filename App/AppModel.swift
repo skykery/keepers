@@ -20,6 +20,13 @@ struct FolderSummary {
     var cached = 0
 }
 
+/// A manual move, for undo and redo. `nil` means automatic placement.
+struct Move {
+    let name: String
+    let before: Folder?
+    let after: Folder?
+}
+
 @MainActor
 final class AppModel: ObservableObject {
     enum Phase { case setup, processing, workspace }
@@ -37,17 +44,30 @@ final class AppModel: ObservableObject {
     }
     @Published var progress = CullSession.Progress(done: 0, total: 0, current: nil)
     @Published var errorMessage: String?
+    @Published private(set) var recentFolders: [URL] = []
 
+    /// All photos, best first; similar shots stay together.
     @Published private(set) var items: [PhotoItem] = []
+    /// Photo names per folder, in `items` order.
+    @Published private(set) var names: [Folder: [String]] = [:]
     @Published var tab: Folder = .picks
     @Published var selection: String?
     @Published var inspectorVisible = true
+    @Published var showFailures = false
     @Published private(set) var failures: [String: String] = [:]
+    @Published private(set) var canUndo = false
+    @Published private(set) var canRedo = false
+    /// Columns in the gallery grid, for ↑ / ↓. Set by the gallery's layout.
+    var gridColumns = 1
 
     private(set) var session: CullSession?
     private var work: Task<Void, Never>?
+    private var index: [String: Int] = [:]
+    private var undoStack: [Move] = []
+    private var redoStack: [Move] = []
 
     init() {
+        recentFolders = Self.loadRecents()
         // `open -a Keepers --args --open <folder>` starts on that folder.
         let args = ProcessInfo.processInfo.arguments
         if let i = args.firstIndex(of: "--open"), args.indices.contains(i + 1) {
@@ -57,18 +77,19 @@ final class AppModel: ObservableObject {
 
     var isProcessing: Bool { phase == .processing }
 
-    var visibleItems: [PhotoItem] { items.filter { $0.folder == tab } }
+    var visibleItems: [PhotoItem] { (names[tab] ?? []).compactMap(item) }
 
-    func count(_ folder: Folder) -> Int { items.filter { $0.folder == folder }.count }
+    func count(_ folder: Folder) -> Int { names[folder]?.count ?? 0 }
 
-    var selectedItem: PhotoItem? { items.first { $0.id == selection } }
+    func item(_ name: String) -> PhotoItem? { index[name].map { items[$0] } }
 
-    /// Other frames of the selected photo's group, best first.
+    var selectedItem: PhotoItem? { selection.flatMap(item) }
+
+    /// Frames of the selected photo's group, best first.
     var groupOfSelection: [PhotoItem] {
         guard let item = selectedItem, let group = item.decision?.group, group >= 0,
               let names = session?.result.groups[safe: group], names.count > 1 else { return [] }
-        let byName = Dictionary(uniqueKeysWithValues: items.map { ($0.id, $0) })
-        return names.compactMap { byName[$0] }
+        return names.compactMap(self.item)
     }
 
     // MARK: Setup
@@ -96,6 +117,7 @@ final class AppModel: ObservableObject {
                 pairs: photos.filter { !$0.companions.isEmpty }.count,
                 cached: photos.filter { store.analysis(for: $0) != nil }.count
             )
+            remember(url)
         } catch {
             summary = FolderSummary()
             errorMessage = "Can't read \(url.lastPathComponent): \(error.localizedDescription)"
@@ -119,6 +141,7 @@ final class AppModel: ObservableObject {
                 try session.decide(preset: preset)
                 self.session = session
                 self.failures = session.failures
+                undoStack = []; redoStack = []; updateUndoState()
                 reloadItems()
                 tab = count(.picks) > 0 ? .picks : .review
                 selection = visibleItems.first?.id
@@ -140,14 +163,36 @@ final class AppModel: ObservableObject {
     func newSession() {
         session = nil
         items = []
+        names = [:]
+        index = [:]
         selection = nil
         if let url = folderURL { open(url) } else { phase = .setup }
+    }
+
+    // MARK: Recent folders
+
+    private static let recentsKey = "recentFolders"
+
+    private static func loadRecents() -> [URL] {
+        (UserDefaults.standard.stringArray(forKey: recentsKey) ?? [])
+            .map { URL(fileURLWithPath: $0, isDirectory: true) }
+            .filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true }
+    }
+
+    private func remember(_ url: URL) {
+        recentFolders = ([url] + recentFolders.filter { $0.standardizedFileURL != url.standardizedFileURL }).prefix(8).map { $0 }
+        UserDefaults.standard.set(recentFolders.map(\.path), forKey: Self.recentsKey)
+    }
+
+    func clearRecents() {
+        recentFolders = []
+        UserDefaults.standard.removeObject(forKey: Self.recentsKey)
     }
 
     // MARK: Workspace
 
     private func reloadItems() {
-        guard let session else { items = []; return }
+        guard let session else { items = []; names = [:]; index = [:]; return }
         let r = session.result
         // Similar shots stay together, groups ordered by their best frame.
         func sortKey(_ name: String) -> (Double, Int, Int) {
@@ -169,6 +214,14 @@ final class AppModel: ObservableObject {
             if ka.2 != kb.2 { return ka.2 < kb.2 }
             return a.id < b.id
         }
+        index = Dictionary(uniqueKeysWithValues: items.enumerated().map { ($1.id, $0) })
+        rebuildNames()
+    }
+
+    private func rebuildNames() {
+        var grouped: [Folder: [String]] = [:]
+        for item in items { grouped[item.folder, default: []].append(item.id) }
+        names = grouped
     }
 
     private func redecide() {
@@ -184,33 +237,76 @@ final class AppModel: ObservableObject {
     /// Moves the selected photo by hand and advances to the next one in the tab.
     func moveSelection(to folder: Folder?) {
         guard let session, let item = selectedItem else { return }
-        let visible = visibleItems
-        let index = visible.firstIndex(of: item) ?? 0
-        do {
-            try session.move(item.id, to: folder)
-            reloadItems()
-            if session.folder(of: item.id) != tab {
-                let remaining = visibleItems
-                selection = remaining.isEmpty ? nil : remaining[min(index, remaining.count - 1)].id
-            }
-        } catch {
-            errorMessage = error.localizedDescription
+        let before = session.store.placements[item.id]
+        guard before != folder else { return }
+        let visible = names[tab] ?? []
+        let position = visible.firstIndex(of: item.id) ?? 0
+        guard apply(Move(name: item.id, before: before, after: folder)) else { return }
+        undoStack.append(Move(name: item.id, before: before, after: folder))
+        redoStack = []
+        updateUndoState()
+        if self.item(item.id)?.folder != tab {
+            let remaining = names[tab] ?? []
+            selection = remaining.isEmpty ? nil : remaining[min(position, remaining.count - 1)]
         }
     }
 
+    func undo() {
+        guard let move = undoStack.popLast() else { return }
+        guard apply(Move(name: move.name, before: move.after, after: move.before)) else { return }
+        redoStack.append(move)
+        updateUndoState()
+        reveal(name: move.name)
+    }
+
+    func redo() {
+        guard let move = redoStack.popLast() else { return }
+        guard apply(move) else { return }
+        undoStack.append(move)
+        updateUndoState()
+        reveal(name: move.name)
+    }
+
+    /// Applies a placement change to the session and to the one affected item.
+    private func apply(_ move: Move) -> Bool {
+        guard let session, let i = index[move.name] else { return false }
+        do {
+            try session.move(move.name, to: move.after)
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
+        }
+        items[i].folder = session.folder(of: move.name) ?? items[i].folder
+        items[i].isManual = session.isManual(move.name)
+        rebuildNames()
+        return true
+    }
+
+    private func updateUndoState() {
+        canUndo = !undoStack.isEmpty
+        canRedo = !redoStack.isEmpty
+    }
+
+    /// Shows `name` in its folder's tab and selects it.
+    func reveal(name: String) {
+        guard let item = item(name) else { return }
+        tab = item.folder
+        selection = name
+    }
+
     func step(_ delta: Int) {
-        let visible = visibleItems
+        let visible = names[tab] ?? []
         guard !visible.isEmpty else { return }
-        guard let current = visible.firstIndex(where: { $0.id == selection }) else {
-            selection = visible.first?.id
+        guard let current = visible.firstIndex(where: { $0 == selection }) else {
+            selection = visible.first
             return
         }
-        selection = visible[max(0, min(visible.count - 1, current + delta))].id
+        selection = visible[max(0, min(visible.count - 1, current + delta))]
     }
 
     func select(tab: Folder) {
         self.tab = tab
-        selection = visibleItems.first?.id
+        selection = names[tab]?.first
     }
 
     func reveal(_ folder: Folder) {
@@ -220,6 +316,11 @@ final class AppModel: ObservableObject {
 
     func revealOriginal(_ item: PhotoItem) {
         NSWorkspace.shared.activateFileViewerSelecting(item.photo.files)
+    }
+
+    func revealFailure(_ name: String) {
+        guard let folderURL else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([folderURL.appendingPathComponent(name)])
     }
 }
 

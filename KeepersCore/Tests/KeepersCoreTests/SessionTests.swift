@@ -27,6 +27,7 @@ final class SessionTests: XCTestCase {
 
         try org.apply([a: .picks, b: .trash])
         let picks = org.url(for: .picks)
+        XCTAssertEqual(FolderOrganizer.destination(of: picks.appendingPathComponent("a.jpg"))?.hasPrefix("../"), true)
         let linked = picks.appendingPathComponent("a.jpg").resolvingSymlinksInPath()
         XCTAssertEqual(linked.path, src.appendingPathComponent("a.jpg").resolvingSymlinksInPath().path)
         XCTAssertTrue(FolderOrganizer.isSymlink(picks.appendingPathComponent("a.orf")))
@@ -40,6 +41,45 @@ final class SessionTests: XCTestCase {
         XCTAssertTrue(FolderOrganizer.isSymlink(org.url(for: .review).appendingPathComponent("a.orf")))
         // Originals untouched.
         XCTAssertEqual(try String(contentsOf: src.appendingPathComponent("a.orf")), "x")
+    }
+
+    func testRelativeLinksSurviveMovingTheFolder() throws {
+        let parent = try Fixtures.tempDirectory()
+        let shoot = parent.appendingPathComponent("shoot")
+        try FileManager.default.createDirectory(at: shoot, withIntermediateDirectories: true)
+        try Fixtures.touch(shoot.appendingPathComponent("a.jpg"), "original")
+        let photo = try PhotoLibrary.scan(shoot)[0]
+        try FolderOrganizer(outputDirectory: shoot).apply([photo: .picks])
+
+        let moved = parent.appendingPathComponent("renamed")
+        try FileManager.default.moveItem(at: shoot, to: moved)
+        XCTAssertEqual(try String(contentsOf: moved.appendingPathComponent("Top Picks/a.jpg")), "original")
+    }
+
+    func testRelativePathAcrossDirectories() {
+        let p = FolderOrganizer.relativePath(to: URL(fileURLWithPath: "/a/b/photo.jpg"),
+                                             from: URL(fileURLWithPath: "/a/out/Top Picks"))
+        XCTAssertEqual(p, "../../b/photo.jpg")
+    }
+
+    func testApplyReplacesAbsoluteLinksAndPlaceMovesOnePhoto() throws {
+        let dir = try Fixtures.tempDirectory()
+        try Fixtures.touch(dir.appendingPathComponent("a.orf"))
+        try Fixtures.touch(dir.appendingPathComponent("a.jpg"))
+        let photo = try PhotoLibrary.scan(dir)[0]
+        let org = FolderOrganizer(outputDirectory: dir)
+        // A 2.0-style absolute link.
+        try FileManager.default.createDirectory(at: org.url(for: .review), withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(at: org.url(for: .review).appendingPathComponent("a.orf"),
+                                                   withDestinationURL: dir.appendingPathComponent("a.orf"))
+        try org.apply([photo: .review])
+        XCTAssertEqual(FolderOrganizer.destination(of: org.url(for: .review).appendingPathComponent("a.orf")), "../a.orf")
+
+        try org.place(photo, in: .trash)
+        for name in ["a.orf", "a.jpg"] {
+            XCTAssertFalse(FolderOrganizer.isSymlink(org.url(for: .review).appendingPathComponent(name)))
+            XCTAssertEqual(FolderOrganizer.destination(of: org.url(for: .trash).appendingPathComponent(name)), "../\(name)")
+        }
     }
 
     func testStoreInvalidatesChangedFiles() throws {

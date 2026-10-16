@@ -52,7 +52,7 @@ public final class CullSession {
                 group.addTask { (photo, Result { try analyzer.analyze(photo) }) }
             }
             for _ in 0..<concurrency { enqueue() }
-            var sinceSave = 0
+            var lastSave = Date()
             while let (photo, outcome) = try await group.next() {
                 try Task.checkCancellation()
                 switch outcome {
@@ -64,8 +64,9 @@ public final class CullSession {
                     failures[photo.name] = String(describing: error)
                 }
                 done += 1
-                sinceSave += 1
-                if sinceSave >= 25 { try? store.saveAnalyses(); sinceSave = 0 }
+                // The file is rewritten whole, so save on a timer rather than
+                // per N photos: a large shoot's cache is tens of MB.
+                if Date().timeIntervalSince(lastSave) > 10 { try? store.saveAnalyses(); lastSave = Date() }
                 progress(Progress(done: done, total: total, current: photo.name))
                 enqueue()
             }
@@ -92,8 +93,11 @@ public final class CullSession {
     /// Pins a photo to a folder by hand. Pass nil to hand it back to the engine.
     public func move(_ name: String, to folder: Folder?) throws {
         try store.setPlacement(folder, for: name)
-        try syncFolders()
+        guard let photo = photosByName[name], let target = self.folder(of: name) else { return }
+        try organizer.place(photo, in: target)
     }
+
+    private lazy var photosByName = Dictionary(photos.map { ($0.name, $0) }, uniquingKeysWith: { a, _ in a })
 
     private func syncFolders() throws {
         var placement: [Photo: Folder] = [:]

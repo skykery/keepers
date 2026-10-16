@@ -52,12 +52,15 @@ struct WorkspaceView: View {
             // sheets, menus, and text fields.
             guard event.modifierFlags.intersection([.command, .control, .option]).isEmpty,
                   NSApp.modalWindow == nil,
-                  let window = event.window, !(window is NSPanel), window.attachedSheet == nil,
+                  let window = event.window, !(window is NSPanel),
+                  window.attachedSheet == nil, window.sheetParent == nil,
                   !(window.firstResponder is NSText)
             else { return event }
             switch event.keyCode {
             case 123: model.step(-1); return nil                   // ←
             case 124: model.step(1); return nil                    // →
+            case 126: model.step(-model.gridColumns); return nil   // ↑
+            case 125: model.step(model.gridColumns); return nil    // ↓
             case 36, 76: model.inspectorVisible.toggle(); return nil  // Return
             case 53: model.inspectorVisible = false; return nil    // Esc
             case 51, 117: model.moveSelection(to: .trash); return nil  // Delete
@@ -78,7 +81,8 @@ struct WorkspaceView: View {
 
 struct GalleryView: View {
     @EnvironmentObject private var model: AppModel
-    private let columns = [GridItem(.adaptive(minimum: 170, maximum: 240), spacing: 10)]
+    private static let minCell: CGFloat = 170, spacing: CGFloat = 10, padding: CGFloat = 12
+    private let columns = [GridItem(.adaptive(minimum: minCell, maximum: 240), spacing: spacing)]
 
     var body: some View {
         let items = model.visibleItems
@@ -97,10 +101,6 @@ struct GalleryView: View {
                     }
                     .padding(12)
                 }
-                if !model.failures.isEmpty {
-                    Text("\(model.failures.count) file(s) couldn't be read: \(model.failures.keys.sorted().joined(separator: ", "))")
-                        .font(.caption).foregroundStyle(.secondary).padding()
-                }
             }
             .onChange(of: model.selection) { id in
                 if let id { withAnimation(.easeInOut(duration: 0.15)) { proxy.scrollTo(id) } }
@@ -108,6 +108,29 @@ struct GalleryView: View {
         }
         .frame(maxWidth: .infinity)
         .background(Color(nsColor: .underPageBackgroundColor))
+        .background(GeometryReader { geo in
+            // Same arithmetic as the adaptive grid, so ↑ / ↓ move one row.
+            Color.clear.onAppear { updateColumns(geo.size.width) }
+                .onChange(of: geo.size.width) { updateColumns($0) }
+        })
+        .safeAreaInset(edge: .bottom) {
+            if !model.failures.isEmpty {
+                Button { model.showFailures = true } label: {
+                    Label("\(model.failures.count) file\(model.failures.count == 1 ? "" : "s") couldn't be read",
+                          systemImage: "exclamationmark.triangle.fill")
+                }
+                .buttonStyle(.borderless)
+                .padding(8)
+                .frame(maxWidth: .infinity)
+                .background(.bar)
+            }
+        }
+        .sheet(isPresented: $model.showFailures) { FailuresSheet() }
+    }
+
+    private func updateColumns(_ width: CGFloat) {
+        let usable = width - 2 * Self.padding
+        model.gridColumns = max(1, Int((usable + Self.spacing) / (Self.minCell + Self.spacing)))
     }
 
     private var emptyState: some View {
@@ -118,6 +141,37 @@ struct GalleryView: View {
                 .font(.caption).foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity)
+    }
+}
+
+struct FailuresSheet: View {
+    @EnvironmentObject private var model: AppModel
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Files Keepers couldn't read").font(.headline)
+            Text("These aren't in any folder. If they're RAW files, this version of macOS may not support that camera yet; a macOS update usually adds it.")
+                .font(.callout).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            List(model.failures.keys.sorted(), id: \.self) { name in
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(name)
+                        Text(model.failures[name] ?? "").font(.caption).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button("Show in Finder") { model.revealFailure(name) }
+                }
+            }
+            .frame(minHeight: 160)
+            HStack {
+                Spacer()
+                Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(20)
+        .frame(width: 520, height: 380)
     }
 }
 

@@ -16,6 +16,24 @@ struct KeepersApp: App {
                 Button("Open Folder…") { model.chooseFolder() }
                     .keyboardShortcut("o")
                     .disabled(model.isProcessing)
+                Menu("Open Recent") {
+                    ForEach(model.recentFolders, id: \.self) { url in
+                        Button(url.lastPathComponent) { model.open(url) }
+                    }
+                    if !model.recentFolders.isEmpty {
+                        Divider()
+                        Button("Clear Menu") { model.clearRecents() }
+                    }
+                }
+                .disabled(model.isProcessing || model.recentFolders.isEmpty)
+            }
+            CommandGroup(replacing: .undoRedo) {
+                Button("Undo Move") { model.undo() }
+                    .keyboardShortcut("z")
+                    .disabled(!model.canUndo)
+                Button("Redo Move") { model.redo() }
+                    .keyboardShortcut("z", modifiers: [.command, .shift])
+                    .disabled(!model.canRedo)
             }
         }
     }

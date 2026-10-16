@@ -89,7 +89,6 @@ public final class SessionStore {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .secondsSince1970
-        encoder.outputFormatting = [.sortedKeys]
         try encoder.encode(value).write(to: url, options: .atomic)
     }
 

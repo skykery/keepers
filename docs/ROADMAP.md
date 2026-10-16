@@ -4,19 +4,6 @@ Ideas for Keepers after 2.0, grouped by theme and roughly ordered by value withi
 
 When an item ships, move it to `CHANGELOG.md` and delete it here.
 
-## Next up
-
-Small, high-value fixes found while building and testing 2.0.
-
-| Feature | Why | Size |
-|---|---|---|
-| Relative symlinks | Links store absolute paths (`/Volumes/CARD/...`), so results break when the folder moves, the drive is renamed, or the shoot is opened on another Mac. `../IMG_001.ORF` survives all three. | S |
-| ⌘Z undo for moves | Today only `U` (back to automatic) exists. A mistyped `X` should be one keystroke to undo. | S |
-| ↑ / ↓ grid navigation | ← / → walk one photo at a time; on a wide grid, moving a row needs many presses. | S |
-| Unreadable files list | Files Keepers can't decode (a RAW newer than the installed macOS supports) only appear as small text under the grid. Show them in a sheet with the reason and a "Reveal in Finder" button. | S |
-| Fast large folders | The UI rebuilds photo lists on every move; expect lag past ~2,000 photos. Index items by name and folder, update incrementally. Test with a 5,000-photo folder. | M |
-| Recent folders | Reopening a shoot means navigating the Open panel again. Keep a recent list on the setup screen and in File → Open Recent. | S |
-
 ## Seeing what you're judging
 
 Scores are measured on a 2048 px preview, and the eye is still the final judge.

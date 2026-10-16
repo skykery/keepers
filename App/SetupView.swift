@@ -18,6 +18,8 @@ struct SetupView: View {
             if model.folderURL != nil, model.summary.photos > 0 {
                 presetPicker
                 startButtons
+            } else if model.folderURL == nil, !model.recentFolders.isEmpty {
+                recents
             }
         }
         .padding(40)
@@ -83,6 +85,26 @@ struct SetupView: View {
             Text(value).font(.title3.monospacedDigit().weight(.semibold))
             Text(label).foregroundStyle(.secondary)
         }
+    }
+
+    private var recents: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Recent").font(.headline)
+            ForEach(model.recentFolders.prefix(5), id: \.self) { url in
+                Button { model.open(url) } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "folder").foregroundStyle(.secondary)
+                        Text(url.lastPathComponent)
+                        Text(url.deletingLastPathComponent().path)
+                            .foregroundStyle(.tertiary).lineLimit(1).truncationMode(.middle)
+                        Spacer()
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var presetPicker: some View {
