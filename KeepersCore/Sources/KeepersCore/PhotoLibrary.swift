@@ -27,16 +27,50 @@ public struct Photo: Hashable, Identifiable, Sendable {
         companions.first(where: { !PhotoFormats.isRaw($0) }) ?? primary
     }
 
-    public init(primary: URL, companions: [URL] = []) {
+    /// Path of the photo's folder relative to the shoot folder; "" at its top.
+    public let subfolder: String
+
+    public init(primary: URL, companions: [URL] = [], subfolder: String = "") {
         self.primary = primary
         self.companions = companions
-        self.name = primary.lastPathComponent
+        self.subfolder = subfolder
+        self.name = subfolder.isEmpty ? primary.lastPathComponent : "\(subfolder)/\(primary.lastPathComponent)"
+    }
+
+    /// The name of `file`'s link in an output folder. Photos from subfolders
+    /// carry the subfolder as a prefix (`Day 2 - IMG_001.ORF`), so files with
+    /// the same name from different cards don't collide.
+    public func linkName(for file: URL) -> String {
+        subfolder.isEmpty ? file.lastPathComponent
+            : subfolder.replacingOccurrences(of: "/", with: " - ") + " - " + file.lastPathComponent
     }
 }
 
 public enum PhotoLibrary {
-    /// Lists the photos directly inside `folder` (not recursive), sorted by name.
-    public static func scan(_ folder: URL) throws -> [Photo] {
+    /// Lists the photos in `folder`, sorted by name. With `includeSubfolders`,
+    /// also in its subfolders, except hidden ones and Keepers' own output
+    /// folders.
+    public static func scan(_ folder: URL, includeSubfolders: Bool = false) throws -> [Photo] {
+        var photos = try scanDirectory(folder, subfolder: "")
+        if includeSubfolders {
+            let own = Set(Folder.allCases.map(\.rawValue))
+            let keys: [URLResourceKey] = [.isDirectoryKey, .isSymbolicLinkKey]
+            let walker = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: keys,
+                                                        options: [.skipsHiddenFiles, .skipsPackageDescendants])
+            let base = folder.resolvingSymlinksInPath().standardizedFileURL.pathComponents
+            while let url = walker?.nextObject() as? URL {
+                let values = try? url.resourceValues(forKeys: Set(keys))
+                guard values?.isDirectory == true, values?.isSymbolicLink != true else { continue }
+                let parts = Array(url.resolvingSymlinksInPath().standardizedFileURL.pathComponents.dropFirst(base.count))
+                if let top = parts.first, own.contains(top) { walker?.skipDescendants(); continue }
+                photos += try scanDirectory(url, subfolder: parts.joined(separator: "/"))
+            }
+        }
+        return photos.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+
+    /// The photos directly inside `folder`, pairing RAW+JPEG.
+    static func scanDirectory(_ folder: URL, subfolder: String) throws -> [Photo] {
         let urls = try FileManager.default.contentsOfDirectory(
             at: folder,
             includingPropertiesForKeys: [.isRegularFileKey],
@@ -58,12 +92,16 @@ public enum PhotoLibrary {
             let raws = group.filter(PhotoFormats.isRaw)
             let rendered = group.filter { !PhotoFormats.isRaw($0) }
             if raws.count == 1, rendered.count == 1 {
-                photos.append(Photo(primary: raws[0], companions: rendered))
+                photos.append(Photo(primary: raws[0], companions: rendered, subfolder: subfolder))
             } else {
                 // Anything other than a clean pair stays separate.
-                photos.append(contentsOf: group.map { Photo(primary: $0) })
+                photos.append(contentsOf: group.map { Photo(primary: $0, subfolder: subfolder) })
             }
         }
-        return photos.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        return photos
     }
+}
+
+extension Array {
+    subscript(safe index: Int) -> Element? { indices.contains(index) ? self[index] : nil }
 }

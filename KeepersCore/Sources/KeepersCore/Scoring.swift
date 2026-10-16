@@ -10,10 +10,16 @@ public struct PhotoScore: Codable, Hashable, Sendable {
     /// Mean Vision face capture quality of the subjects. Vision means it for
     /// comparing shots of the same person, so it only ranks within a group.
     public var face: Double?
+    /// Biggest smile among the subject faces, 0...1 (see `Scorer.smile`).
+    public var smile: Double?
     /// Hard failure that sends the photo to Trash regardless of rank.
     public var rejection: String?
     /// Problems that keep the photo out of Top Picks but don't trash it.
     public var flaws: [String]
+    /// Subject faces with eyes closed.
+    public var blinking = 0
+    /// Observations shown with the decision that don't affect it.
+    public var notes: [String] = []
 }
 
 public struct ScoringWeights: Codable, Hashable, Sendable {
@@ -38,8 +44,10 @@ public struct GateThresholds: Codable, Hashable, Sendable {
 }
 
 public enum Scorer {
+    /// With `exposureExempt` (bracket frames), exposure never rejects: a
+    /// bracket's dark and bright frames are dark and bright on purpose.
     public static func score(_ a: PhotoAnalysis, weights: ScoringWeights = .init(),
-                             gate: GateThresholds) -> PhotoScore {
+                             gate: GateThresholds, exposureExempt: Bool = false) -> PhotoScore {
         let sharpness = Self.sharpness(a.subjectFocus)
         let exposure = exposureScore(a.exposure)
 
@@ -50,13 +58,7 @@ public enum Scorer {
             face = qualities.isEmpty ? nil : qualities.reduce(0, +) / Double(qualities.count)
         }
 
-        var parts: [(value: Double, weight: Double)] = [
-            (sharpness, weights.sharpness),
-            (exposure, weights.exposure),
-        ]
-        if let aesthetics = a.aesthetics { parts.append((aesthetics, weights.aesthetics)) }
-        let total = parts.reduce(0) { $0 + $1.weight }
-        var quality = parts.reduce(0) { $0 + $1.value * $1.weight } / total
+        var quality = combine(sharpness: sharpness, exposure: exposure, aesthetics: a.aesthetics, weights: weights)
 
         var flaws: [String] = []
         if let primary = a.primaryFace, primary.eyesClosed == true {
@@ -69,9 +71,35 @@ public enum Scorer {
             quality *= 0.85
         }
 
+        let smiles = subjects.compactMap { $0.mouth.map(Self.smile) }
+        var notes: [String] = []
+        var rejection = rejection(a, gate: gate)
+        if rejection == "Blown highlights" || rejection == "Severely underexposed" {
+            if exposureExempt {
+                rejection = nil
+            } else if (a.aesthetics ?? 0) >= intentionalExposureAesthetics {
+                // Low-key and high-key photos clip on purpose; a strong
+                // aesthetics score says this one works.
+                notes.append(rejection == "Blown highlights" ? "Very bright, but looks intentional" : "Very dark, but looks intentional")
+                rejection = nil
+            }
+        }
         return PhotoScore(quality: quality, sharpness: sharpness, exposure: exposure,
-                          aesthetics: a.aesthetics, face: face,
-                          rejection: rejection(a, gate: gate), flaws: flaws)
+                          aesthetics: a.aesthetics, face: face, smile: smiles.max(),
+                          rejection: rejection, flaws: flaws, blinking: blinking, notes: notes)
+    }
+
+    /// Aesthetics at or above which a clipped exposure counts as intentional.
+    public static let intentionalExposureAesthetics = 0.65
+
+    /// The weighted quality of the three signals. Without aesthetics (macOS
+    /// 13–14, no model), the other weights are renormalized.
+    public static func combine(sharpness: Double, exposure: Double, aesthetics: Double?, weights: ScoringWeights) -> Double {
+        var parts: [(value: Double, weight: Double)] = [(sharpness, weights.sharpness), (exposure, weights.exposure)]
+        if let aesthetics { parts.append((aesthetics, weights.aesthetics)) }
+        let total = parts.reduce(0) { $0 + $1.weight }
+        guard total > 0 else { return 0 }
+        return parts.reduce(0) { $0 + $1.value * $1.weight } / total
     }
 
     /// 1 for a well-exposed subject with little clipping, falling toward 0 as
@@ -95,6 +123,21 @@ public enum Scorer {
         if a.exposure.highlightClip > gate.maxHighlightClip { return "Blown highlights" }
         if a.exposure.shadowClip > gate.maxShadowClip { return "Severely underexposed" }
         return nil
+    }
+
+    /// Smile size at or above which a photo is kept out of Trash.
+    public static let bigSmile = 0.75
+    /// Smile size that counts as smiling, for Moments.
+    public static let smiling = 0.35
+
+    /// Smile size, 0...1, from mouth geometry. Calibrated on landmarks:
+    /// neutral and crying mouths have corners at or below the lips' midline
+    /// (lift ≤ 0.02), gentle smiles 0.08–0.13, laughs 0.18+. An open mouth
+    /// only adds when the corners are lifted, so a cry or a yawn isn't a smile.
+    public static func smile(_ m: MouthShape) -> Double {
+        let lift = ramp(m.cornerLift, from: 0.02, to: 0.20)
+        let open = m.cornerLift > 0.05 ? ramp(m.openness, from: 0, to: 0.35) : 0
+        return 0.75 * lift + 0.25 * open
     }
 
     /// Focus energy scale: sharpness is 0.63 at this energy and ~0.95 at 3x.

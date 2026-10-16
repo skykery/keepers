@@ -8,6 +8,13 @@ public struct BurstGrouper {
     public var similarGap: TimeInterval = 30
     /// Feature-print cosine distance under which two frames look alike.
     public var maxDistance: Double = 0.25
+    /// Photos that start a new group, whatever the rules say (set by hand).
+    public var breaks: Set<String> = []
+    /// Photos that join the previous photo's group (set by hand).
+    public var joins: Set<String> = []
+    /// Photos that form a group of their own; their neighbours group as if
+    /// they weren't there (set by hand).
+    public var separated: Set<String> = []
 
     public init() {}
 
@@ -27,15 +34,22 @@ public struct BurstGrouper {
         let sorted = items.sorted { ($0.date, $0.id) < ($1.date, $1.id) }
         var groups: [[String]] = []
         var previous: Item?
+        var alone: [[String]] = []
         for item in sorted {
-            if let prev = previous, belongTogether(prev, item) {
+            if separated.contains(item.id) { alone.append([item.id]); continue }
+            let together = previous.map { prev in
+                joins.contains(item.id) || (!breaks.contains(item.id) && belongTogether(prev, item))
+            } ?? false
+            if together {
                 groups[groups.count - 1].append(item.id)
             } else {
                 groups.append([item.id])
             }
             previous = item
         }
-        return groups
+        // Lone shots join the list in capture order.
+        let firstDate = Dictionary(uniqueKeysWithValues: sorted.map { ($0.id, $0.date) })
+        return (groups + alone).sorted { firstDate[$0[0]]! < firstDate[$1[0]]! }
     }
 
     func belongTogether(_ a: Item, _ b: Item) -> Bool {

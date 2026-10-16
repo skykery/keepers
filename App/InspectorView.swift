@@ -17,6 +17,16 @@ struct InspectorView: View {
                 PhotoImage(photo: item.photo, size: 1600, contentMode: .fit)
                     .aspectRatio(aspect, contentMode: .fit)
                     .overlay { if model.showFocusMap, let focusMap { FocusOverlay(map: focusMap) } }
+                    .overlay {
+                        if model.showFocusMap, let point = item.analysis?.metadata?.focusPoint {
+                            GeometryReader { geo in
+                                Rectangle().strokeBorder(.yellow, lineWidth: 1.5)
+                                    .frame(width: point.width * geo.size.width, height: point.height * geo.size.height)
+                                    .offset(x: point.x * geo.size.width, y: point.y * geo.size.height)
+                            }
+                            .help("Where the camera focused")
+                        }
+                    }
                     .clipShape(RoundedRectangle(cornerRadius: 8))
                     .frame(maxWidth: .infinity, minHeight: 160, maxHeight: 280)
                     .onTapGesture { model.openViewer(.single) }
@@ -49,6 +59,7 @@ struct InspectorView: View {
             }
             Spacer()
             Button { model.revealOriginal(item) } label: { Image(systemName: "magnifyingglass") }
+                .accessibilityLabel("Show original in Finder")
                 .buttonStyle(.borderless)
                 .help("Show original in Finder")
         }
@@ -100,6 +111,10 @@ struct InspectorView: View {
             })
             if let a = s.aesthetics { SignalBar(label: "Aesthetics", value: a, help: "Apple Vision aesthetics score") }
             if let f = s.face { SignalBar(label: "Face quality", value: f, help: "Used to rank similar shots of the same people") }
+            if let smile = s.smile {
+                SignalBar(label: "Smile", value: smile,
+                          help: smile >= Scorer.bigSmile ? "Big smile: never sent to Trash" : "Biggest smile among the people in the photo")
+            }
         }
     }
 
@@ -131,7 +146,11 @@ struct InspectorView: View {
 
     private var group: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Similar shots").font(.headline)
+            HStack {
+                Text("Similar shots").font(.headline)
+                Spacer()
+                groupMenu
+            }
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
                     ForEach(model.groupOfSelection) { other in
@@ -154,6 +173,27 @@ struct InspectorView: View {
     }
 
     private func percent(_ x: Double) -> String { "\(Int((x * 100).rounded()))%" }
+
+    /// Fix grouping by hand: split a group at this photo, or join it to the previous one.
+    private var groupMenu: some View {
+        Menu {
+            if let d = item.decision, d.groupSize > 1 {
+                Button("Separate This Shot") { model.regroupSelection(.separate) }
+                Button("Split Group Here (By Time)") { model.regroupSelection(.splitHere) }
+            }
+            Button("Join Previous Shot (By Time)") { model.regroupSelection(.joinPrevious) }
+            if model.hasGroupOverride(item.id) {
+                Divider()
+                Button("Reset Grouping") { model.resetGroupingOfSelection() }
+            }
+        } label: {
+            Image(systemName: "rectangle.3.group")
+                .accessibilityLabel("Grouping")
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help("Fix how this photo is grouped")
+    }
 }
 
 struct SignalBar: View {
@@ -175,6 +215,9 @@ struct SignalBar: View {
                 .frame(width: 26, alignment: .trailing)
         }
         .help(help ?? "")
+        .accessibilityElement(children: .ignore)
+        // In the label: SwiftUI didn't expose a separate value for this element.
+        .accessibilityLabel("\(label), \(Int((value * 100).rounded())) out of 100")
     }
 
     private var color: Color { value >= 0.7 ? .green : value >= 0.4 ? .yellow : .red }
@@ -204,12 +247,22 @@ struct FaceCrop: View {
             .clipShape(RoundedRectangle(cornerRadius: 6))
             .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(border, lineWidth: 2))
             HStack(spacing: 3) {
-                if face.smiling == true { Image(systemName: "face.smiling").help("Smiling") }
+                if let m = face.mouth {
+                    let smile = Scorer.smile(m)
+                    if smile >= Scorer.smiling {
+                        Label("\(Int((smile * 100).rounded()))", systemImage: "face.smiling")
+                            .labelStyle(.titleAndIcon).help("Smile size")
+                    }
+                } else if face.smiling == true {
+                    Image(systemName: "face.smiling").help("Smiling")
+                }
                 if face.eyesClosed == true { Image(systemName: "eye.slash").help("Eyes closed") }
-                if let q = face.quality { Text("\(Int((q * 100).rounded()))").monospacedDigit().help("Face quality") }
+                if let q = face.quality { Text("Q \(Int((q * 100).rounded()))").monospacedDigit().help("Face quality") }
             }
             .font(.caption2).foregroundStyle(.secondary)
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilityText)
         .task(id: photo.decodeURL.path) {
             guard let image = await ImageCache.shared.image(for: photo, size: 1600) else { return }
             let r = face.rect
@@ -222,9 +275,18 @@ struct FaceCrop: View {
         }
     }
 
+    private var accessibilityText: String {
+        var parts = ["Face"]
+        if let m = face.mouth { parts.append("smile \(Int((Scorer.smile(m) * 100).rounded()))") }
+        else if face.smiling == true { parts.append("smiling") }
+        if face.eyesClosed == true { parts.append("eyes closed") }
+        if let q = face.quality { parts.append("face quality \(Int((q * 100).rounded()))") }
+        return parts.joined(separator: ", ")
+    }
+
     private var border: Color {
         if face.eyesClosed == true { return .red }
-        if face.smiling == true { return .green }
-        return .clear
+        let smiling = face.mouth.map { Scorer.smile($0) >= Scorer.smiling } ?? (face.smiling == true)
+        return smiling ? .green : .clear
     }
 }

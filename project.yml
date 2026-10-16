@@ -38,6 +38,20 @@ targets:
         LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
         LSApplicationCategoryType: public.app-category.photography
         NSHighResolutionCapable: true
+        # Finder: "Open With > Keepers" on folders, and drops on the Dock icon.
+        CFBundleDocumentTypes:
+          - CFBundleTypeName: Folder
+            CFBundleTypeRole: Viewer
+            LSHandlerRank: Alternate
+            LSItemContentTypes: [public.folder]
+        # Finder: right-click a folder > Quick Actions / Services > Cull with Keepers.
+        NSServices:
+          - NSMenuItem:
+              default: Cull with Keepers
+            NSMessage: cullFolder
+            NSPortName: Keepers
+            NSRequiredContext: {}
+            NSSendFileTypes: [public.folder]
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.skykery.keepers
@@ -48,6 +62,9 @@ targets:
         CODE_SIGN_IDENTITY: "-"
         CODE_SIGN_STYLE: Manual
         DEAD_CODE_STRIPPING: YES
+        # Text in SwiftUI views is collected into App/Localizable.xcstrings.
+        SWIFT_EMIT_LOC_STRINGS: YES
+        LOCALIZATION_PREFERS_STRING_CATALOGS: YES
 schemes:
   Keepers:
     build:

@@ -29,6 +29,17 @@ git push --follow-tags
 When **publish** finishes, the GitHub Release exists with the `.dmg`
 attached. There is no manual step in between.
 
+### After a release: Homebrew
+
+Once the `skykery/homebrew-keepers` tap exists, update its `Casks/keepers.rb`
+(source: `packaging/homebrew/keepers.rb`) with the new `version` and the
+`.dmg`'s checksum:
+
+```bash
+curl -sL -o /tmp/k.dmg https://github.com/skykery/keepers/releases/download/vX.Y.Z/Keepers-X.Y.Z.dmg
+shasum -a 256 /tmp/k.dmg
+```
+
 ### When Apple is slow
 
 Notarization on this account has taken from minutes to over 4 hours. If

@@ -21,6 +21,7 @@ public final class SessionStore {
     public let directory: URL
     private var entries: [String: Entry] = [:]
     public private(set) var placements: [String: Folder] = [:]
+    public private(set) var groupOverrides = GroupOverrides()
     private let lock = NSLock()
 
     public init(outputDirectory: URL) {
@@ -30,6 +31,7 @@ public final class SessionStore {
 
     private var analysisURL: URL { directory.appendingPathComponent("analysis.json") }
     private var placementsURL: URL { directory.appendingPathComponent("placements.json") }
+    private var groupingURL: URL { directory.appendingPathComponent("grouping.json") }
 
     private func load() {
         let decoder = JSONDecoder()
@@ -43,6 +45,10 @@ public final class SessionStore {
            let file = try? decoder.decode([String: Folder].self, from: data) {
             placements = file
         }
+        if let data = try? Data(contentsOf: groupingURL),
+           let file = try? decoder.decode(GroupOverrides.self, from: data) {
+            groupOverrides = file
+        }
     }
 
     /// Cached analysis for `photo`, if the file hasn't changed since.
@@ -50,7 +56,8 @@ public final class SessionStore {
         guard let stamp = Self.stamp(photo.primary) else { return nil }
         lock.lock(); defer { lock.unlock() }
         guard let e = entries[photo.name], e.fileSize == stamp.size,
-              abs(e.modified.timeIntervalSince(stamp.modified)) < 1 else { return nil }
+              abs(e.modified.timeIntervalSince(stamp.modified)) < 1,
+              (e.analysis.revision ?? 1) >= PhotoAnalysis.currentRevision else { return nil }
         return e.analysis
     }
 
@@ -76,6 +83,46 @@ public final class SessionStore {
         let snapshot = placements
         lock.unlock()
         try write(snapshot, to: placementsURL)
+    }
+
+    public func setGroupOverrides(_ overrides: GroupOverrides) throws {
+        lock.lock()
+        groupOverrides = overrides
+        lock.unlock()
+        try write(overrides, to: groupingURL)
+    }
+
+    // MARK: Keepers 1.x
+
+    private var legacyURL: URL { directory.deletingLastPathComponent().appendingPathComponent("organization.json") }
+    private var legacyHandledURL: URL { directory.appendingPathComponent("legacy-handled") }
+
+    /// Placements from a Keepers 1.x `organization.json` not yet imported or
+    /// dismissed. 1.x saved its automatic decisions there too, so these are
+    /// offered, not applied.
+    public func pendingLegacyPlacements(for photos: [Photo]) -> [String: Folder] {
+        guard !FileManager.default.fileExists(atPath: legacyHandledURL.path),
+              let data = try? Data(contentsOf: legacyURL),
+              let raw = try? JSONDecoder().decode([String: String].self, from: data) else { return [:] }
+        let names = Set(photos.map(\.name))
+        var result: [String: Folder] = [:]
+        for (name, value) in raw where names.contains(name) {
+            if let folder = Folder(rawValue: value) { result[name] = folder }
+        }
+        return result
+    }
+
+    /// Imports the 1.x placements as manual ones (or not), and stops offering.
+    public func resolveLegacyPlacements(_ legacy: [String: Folder], importing: Bool) throws {
+        if importing {
+            lock.lock()
+            for (name, folder) in legacy where placements[name] == nil { placements[name] = folder }
+            let snapshot = placements
+            lock.unlock()
+            try write(snapshot, to: placementsURL)
+        }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try Data().write(to: legacyHandledURL)
     }
 
     public func saveAnalyses() throws {

@@ -5,6 +5,19 @@ import ImageIO
 public struct DecodedImage {
     public let image: CGImage
     public let captureDate: Date?
+    public var metadata = CaptureMetadata()
+}
+
+/// Shooting details from EXIF and maker notes that change how a photo is judged.
+public struct CaptureMetadata: Codable, Hashable, Sendable {
+    /// Exposure compensation in EV; brackets vary it frame to frame.
+    public var exposureBias: Double?
+    /// Where the camera focused, upright and normalized (top-left origin).
+    /// Only some cameras record it in a form macOS exposes (Nikon).
+    public var focusPoint: NormRect?
+    public init(exposureBias: Double? = nil, focusPoint: NormRect? = nil) {
+        self.exposureBias = exposureBias; self.focusPoint = focusPoint
+    }
 }
 
 public enum ImageDecoder {
@@ -31,7 +44,51 @@ public enum ImageDecoder {
             image = thumbnail(source, maxPixelSize: maxPixelSize, forceFullDecode: true) ?? preview
         }
         guard let image else { throw Failure.unreadable(url) }
-        return DecodedImage(image: image, captureDate: captureDate(source))
+        return DecodedImage(image: image, captureDate: captureDate(source), metadata: metadata(source))
+    }
+
+    /// Exposure compensation and focus point, without decoding pixels.
+    public static func metadata(_ url: URL) -> CaptureMetadata {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return CaptureMetadata() }
+        return metadata(source)
+    }
+
+    static func metadata(_ source: CGImageSource) -> CaptureMetadata {
+        guard let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any] else { return CaptureMetadata() }
+        let exif = props[kCGImagePropertyExifDictionary] as? [CFString: Any]
+        let aux = props[kCGImagePropertyExifAuxDictionary] as? [CFString: Any]
+        let orientation = props[kCGImagePropertyOrientation] as? Int ?? 1
+        return CaptureMetadata(
+            exposureBias: (exif?[kCGImagePropertyExifExposureBiasValue] as? NSNumber)?.doubleValue,
+            focusPoint: (aux?["AFInfo" as CFString] as? [Any]).flatMap { focusPoint(afInfo: $0, orientation: orientation) }
+        )
+    }
+
+    /// ImageIO's AFInfo: groups of x, y, width, height, flag, where (x, y) is
+    /// the point's corner — normalized, sensor orientation, taken as
+    /// bottom-left origin like ImageIO's other normalized rects (the Nikon
+    /// layouts seen are symmetric, so this couldn't be confirmed) — and "F"
+    /// marks the points used.
+    /// Returns the union of the used points, upright, top-left origin.
+    static func focusPoint(afInfo: [Any], orientation: Int) -> NormRect? {
+        var used: [NormRect] = []
+        var i = 0
+        while i + 4 < afInfo.count {
+            let n = afInfo[i..<(i + 4)].compactMap { Double("\($0)") }
+            if n.count == 4, "\(afInfo[i + 4])" == "F" {
+                used.append(NormRect(bottomLeft: CGRect(x: n[0], y: n[1], width: n[2], height: n[3])))
+            }
+            i += 5
+        }
+        guard let first = used.first else { return nil }
+        let r = used.dropFirst().reduce(first) { $0.union($1) }
+        // EXIF orientations: 3 = 180°, 6 = 90° clockwise, 8 = 90° counterclockwise.
+        switch orientation {
+        case 3: return NormRect(x: 1 - r.x - r.width, y: 1 - r.y - r.height, width: r.width, height: r.height)
+        case 6: return NormRect(x: 1 - r.y - r.height, y: r.x, width: r.height, height: r.width)
+        case 8: return NormRect(x: r.y, y: 1 - r.x - r.width, width: r.height, height: r.width)
+        default: return r
+        }
     }
 
     /// An image for looking at closely, and how it relates to the original.

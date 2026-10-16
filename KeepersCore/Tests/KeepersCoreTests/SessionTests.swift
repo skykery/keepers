@@ -16,6 +16,30 @@ final class SessionTests: XCTestCase {
         XCTAssertEqual(photos[1].decodeURL.lastPathComponent, "IMG_2.nef")
     }
 
+    func testSubfoldersAreScannedWithPrefixedLinks() throws {
+        let dir = try Fixtures.tempDirectory()
+        let fm = FileManager.default
+        for sub in ["Card A", "Card B", "Top Picks", ".hidden"] {
+            try fm.createDirectory(at: dir.appendingPathComponent(sub), withIntermediateDirectories: true)
+        }
+        try Fixtures.touch(dir.appendingPathComponent("root.jpg"))
+        try Fixtures.touch(dir.appendingPathComponent("Card A/IMG_1.ORF"))
+        try Fixtures.touch(dir.appendingPathComponent("Card A/IMG_1.JPG"))
+        try Fixtures.touch(dir.appendingPathComponent("Card B/IMG_1.ORF"))
+        try Fixtures.touch(dir.appendingPathComponent("Top Picks/old.jpg"))   // our output folder
+        try Fixtures.touch(dir.appendingPathComponent(".hidden/x.jpg"))
+
+        XCTAssertEqual(try PhotoLibrary.scan(dir).map(\.name), ["root.jpg"])
+        let all = try PhotoLibrary.scan(dir, includeSubfolders: true)
+        XCTAssertEqual(all.map(\.name), ["Card A/IMG_1.ORF", "Card B/IMG_1.ORF", "root.jpg"])
+        XCTAssertEqual(all[0].companions.map(\.lastPathComponent), ["IMG_1.JPG"])
+
+        try FolderOrganizer(outputDirectory: dir).apply([all[0]: .picks, all[1]: .picks])
+        let links = try fm.contentsOfDirectory(atPath: dir.appendingPathComponent("Top Picks").path).sorted()
+        XCTAssertEqual(links, ["Card A - IMG_1.JPG", "Card A - IMG_1.ORF", "Card B - IMG_1.ORF", "old.jpg"])
+        XCTAssertEqual(try String(contentsOf: dir.appendingPathComponent("Top Picks/Card B - IMG_1.ORF")), "x")
+    }
+
     func testOrganizerLinksAllFilesAndCleansUp() throws {
         let src = try Fixtures.tempDirectory(), out = try Fixtures.tempDirectory()
         try Fixtures.touch(src.appendingPathComponent("a.orf"))
@@ -80,6 +104,21 @@ final class SessionTests: XCTestCase {
             XCTAssertFalse(FolderOrganizer.isSymlink(org.url(for: .review).appendingPathComponent(name)))
             XCTAssertEqual(FolderOrganizer.destination(of: org.url(for: .trash).appendingPathComponent(name)), "../\(name)")
         }
+    }
+
+    func testLegacyPlacementsAreOfferedOnceAndImported() throws {
+        let dir = try Fixtures.tempDirectory()
+        try Fixtures.touch(dir.appendingPathComponent("a.jpg"))
+        try Fixtures.touch(dir.appendingPathComponent("b.jpg"))
+        try #"{"a.jpg": "Top Picks", "b.jpg": "Trash", "gone.jpg": "Review", "c.jpg": "Picks"}"#
+            .write(to: dir.appendingPathComponent("organization.json"), atomically: true, encoding: .utf8)
+        let photos = try PhotoLibrary.scan(dir)
+        let store = SessionStore(outputDirectory: dir)
+        let legacy = store.pendingLegacyPlacements(for: photos)
+        XCTAssertEqual(legacy, ["a.jpg": .picks, "b.jpg": .trash])
+        try store.resolveLegacyPlacements(legacy, importing: true)
+        XCTAssertEqual(store.placements, ["a.jpg": .picks, "b.jpg": .trash])
+        XCTAssertTrue(SessionStore(outputDirectory: dir).pendingLegacyPlacements(for: photos).isEmpty)
     }
 
     func testStoreInvalidatesChangedFiles() throws {

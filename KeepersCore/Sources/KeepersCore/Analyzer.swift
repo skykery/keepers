@@ -23,24 +23,29 @@ public struct Analyzer {
     public func analyze(_ photo: Photo) throws -> PhotoAnalysis {
         let decoded = try ImageDecoder.decode(photo.decodeURL, maxPixelSize: Self.workingSize)
         let date = decoded.captureDate ?? Self.fileDate(photo.primary)
-        return try analyze(decoded.image, captureDate: date)
+        // A RAW+JPEG pair: shooting details come from the RAW.
+        let metadata = photo.decodeURL == photo.primary ? decoded.metadata : ImageDecoder.metadata(photo.primary)
+        return try analyze(decoded.image, captureDate: date, metadata: metadata)
     }
 
-    public func analyze(_ image: CGImage, captureDate: Date) throws -> PhotoAnalysis {
+    public func analyze(_ image: CGImage, captureDate: Date, metadata: CaptureMetadata = CaptureMetadata()) throws -> PhotoAnalysis {
         guard let px = PixelBuffer(image) else { throw ImageDecoder.Failure.unreadable(URL(fileURLWithPath: "/")) }
 
         let quality = VNDetectFaceCaptureQualityRequest()
         let saliency = VNGenerateAttentionBasedSaliencyImageRequest()
         let featurePrint = VNGenerateImageFeaturePrintRequest()
         featurePrint.imageCropAndScaleOption = .scaleFill
-        var requests: [VNRequest] = [quality, saliency, featurePrint]
+        let animalsRequest = VNRecognizeAnimalsRequest()
+        var requests: [VNRequest] = [quality, saliency, featurePrint, animalsRequest]
         var aestheticsRequest: VNRequest?
         if #available(macOS 15.0, *) {
             let r = VNCalculateImageAestheticsScoresRequest()
             requests.append(r)
             aestheticsRequest = r
         }
-        try VNImageRequestHandler(cgImage: image, orientation: .up).perform(requests)
+        let handler = VNImageRequestHandler(cgImage: image, orientation: .up)
+        try handler.perform(requests)
+        let mouths = Self.mouthShapes(handler: handler, faces: quality.results ?? [], imageSize: image)
 
         // Faces.
         let expressions = Self.expressions(in: image)
@@ -48,7 +53,7 @@ public struct Analyzer {
         let observed = (quality.results ?? []).map { NormRect(bottomLeft: $0.boundingBox).clamped() }
         let largest = observed.map(\.height).max() ?? 0
         var faces: [PhotoAnalysis.Face] = []
-        for (obs, rect) in zip(quality.results ?? [], observed) {
+        for (i, (obs, rect)) in zip(quality.results ?? [], observed).enumerated() {
             let expression = expressions.max { $0.rect.intersectionOverUnion(rect) < $1.rect.intersectionOverUnion(rect) }
             let matched = expression.flatMap { $0.rect.intersectionOverUnion(rect) > 0.3 ? $0 : nil }
             faces.append(PhotoAnalysis.Face(
@@ -57,17 +62,28 @@ public struct Analyzer {
                 focus: PixelMetrics.focusEnergy(px, in: rect.eyeBand, maxSide: Self.eyeBandSide),
                 smiling: matched?.smiling,
                 eyesClosed: matched?.eyesClosed,
+                mouth: mouths[safe: i] ?? nil,
                 isSubject: rect.height >= faceHeightFloor && rect.height >= largest * 0.4
             ))
         }
         let subjectFaces = faces.filter(\.isSubject)
+        let animals = (animalsRequest.results ?? []).map { NormRect(bottomLeft: $0.boundingBox).clamped() }
 
-        // Subject region and its focus.
+        // Subject region and its focus: faces, else where the camera focused,
+        // else a cat or dog, else what draws attention, else the center.
         let subject: NormRect
         let subjectFocus: Double
         if !subjectFaces.isEmpty {
             subject = subjectFaces.map(\.rect).reduce(subjectFaces[0].rect) { $0.union($1) }
             subjectFocus = Self.weightedFaceFocus(subjectFaces)
+        } else if let point = metadata.focusPoint {
+            // Where the camera focused: the photographer's own choice of subject.
+            subject = NormRect(x: point.midX - max(point.width, 0.04) * 1.5, y: point.midY - max(point.height, 0.05) * 1.5,
+                               width: max(point.width, 0.04) * 3, height: max(point.height, 0.05) * 3).clamped()
+            subjectFocus = PixelMetrics.focusEnergy(px, in: subject)
+        } else if let pet = Self.petSubject(handler: handler, animals: animals) {
+            subject = pet
+            subjectFocus = PixelMetrics.focusEnergy(px, in: pet, maxSide: Self.eyeBandSide * 2)
         } else {
             let salient = (saliency.results?.first?.salientObjects ?? []).map { NormRect(bottomLeft: $0.boundingBox) }
             if let first = salient.first {
@@ -106,8 +122,65 @@ public struct Analyzer {
             aesthetics: aesthetics,
             isUtility: isUtility,
             faces: faces,
-            featurePrint: fp
+            featurePrint: fp,
+            metadata: metadata,
+            animals: animals,
+            revision: PhotoAnalysis.currentRevision
         )
+    }
+
+    /// How far the view moved from `a` to `b`, as fractions of the frame
+    /// (+x right, +y down), from Vision's image registration on small copies.
+    public static func translation(from a: Photo, to b: Photo) throws -> CGVector {
+        let ia = try ImageDecoder.decode(a.decodeURL, maxPixelSize: 512).image
+        let ib = try ImageDecoder.decode(b.decodeURL, maxPixelSize: 512).image
+        let request = VNTranslationalImageRegistrationRequest(targetedCGImage: ib)
+        try VNImageRequestHandler(cgImage: ia, orientation: .up).perform([request])
+        guard let t = request.results?.first?.alignmentTransform else { return .zero }
+        // Vision's y axis points up; flip it so +y means the view moved down.
+        return CGVector(dx: t.tx / CGFloat(ia.width), dy: -t.ty / CGFloat(ia.height))
+    }
+
+    /// The region to judge a cat's or dog's sharpness on: its eyes when
+    /// Vision's animal pose finds them (macOS 14+), else the largest animal.
+    static func petSubject(handler: VNImageRequestHandler, animals: [NormRect]) -> NormRect? {
+        guard let largest = animals.max(by: { $0.area < $1.area }) else { return nil }
+        if #available(macOS 14.0, *) {
+            let pose = VNDetectAnimalBodyPoseRequest()
+            if (try? handler.perform([pose])) != nil, let body = pose.results?.first,
+               let left = try? body.recognizedPoint(.leftEye), let right = try? body.recognizedPoint(.rightEye),
+               left.confidence > 0.3, right.confidence > 0.3 {
+                let a = left.location, b = right.location  // normalized, bottom-left origin
+                let span = max(hypot(a.x - b.x, a.y - b.y), 0.02)
+                let box = CGRect(x: min(a.x, b.x) - span * 0.6, y: min(a.y, b.y) - span * 0.6,
+                                 width: abs(a.x - b.x) + span * 1.2, height: abs(a.y - b.y) + span * 1.2)
+                return NormRect(bottomLeft: box).clamped()
+            }
+        }
+        return largest
+    }
+
+    /// Mouth geometry for each face, in order, from Vision's landmarks.
+    static func mouthShapes(handler: VNImageRequestHandler, faces: [VNFaceObservation], imageSize image: CGImage) -> [MouthShape?] {
+        guard !faces.isEmpty else { return [] }
+        let request = VNDetectFaceLandmarksRequest()
+        request.inputFaceObservations = faces
+        guard (try? handler.perform([request])) != nil, let results = request.results else {
+            return faces.map { _ in nil }
+        }
+        let size = CGSize(width: image.width, height: image.height)
+        // Match results back to the input faces by box overlap.
+        return faces.map { face in
+            let box = NormRect(bottomLeft: face.boundingBox)
+            guard let match = results.max(by: {
+                NormRect(bottomLeft: $0.boundingBox).intersectionOverUnion(box) < NormRect(bottomLeft: $1.boundingBox).intersectionOverUnion(box)
+            }), NormRect(bottomLeft: match.boundingBox).intersectionOverUnion(box) > 0.5,
+                  let lm = match.landmarks, let le = lm.leftEye, let re = lm.rightEye,
+                  let outer = lm.outerLips, let inner = lm.innerLips
+            else { return nil }
+            return MouthShape(leftEye: le.pointsInImage(imageSize: size), rightEye: re.pointsInImage(imageSize: size),
+                              outerLips: outer.pointsInImage(imageSize: size), innerLips: inner.pointsInImage(imageSize: size))
+        }
     }
 
     /// Focus energy at full detail for burst ranking: the primary face's eye

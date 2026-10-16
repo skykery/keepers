@@ -22,12 +22,12 @@ public final class CullSession {
     public private(set) var analyses: [String: PhotoAnalysis] = [:]
     public private(set) var failures: [String: String] = [:]
     public private(set) var result = CullResult(scores: [:], decisions: [:], groups: [])
-    public private(set) var preset: Preset = .balanced
+    public private(set) var settings: CullSettings = Preset.balanced.settings
 
-    public init(inputDirectory: URL, outputDirectory: URL? = nil) throws {
+    public init(inputDirectory: URL, outputDirectory: URL? = nil, includeSubfolders: Bool = false) throws {
         self.inputDirectory = inputDirectory
         self.outputDirectory = outputDirectory ?? inputDirectory
-        photos = try PhotoLibrary.scan(inputDirectory)
+        photos = try PhotoLibrary.scan(inputDirectory, includeSubfolders: includeSubfolders)
         store = SessionStore(outputDirectory: self.outputDirectory)
         organizer = FolderOrganizer(outputDirectory: self.outputDirectory)
     }
@@ -75,6 +75,36 @@ public final class CullSession {
         }
         try store.saveAnalyses()
         try await refineBursts(analyzer: analyzer, progress: progress)
+        try await linkPanoramas(progress: progress)
+    }
+
+    /// For consecutive frames up to 5 s apart that look different enough to
+    /// be panorama frames rather than a burst, measures how far the view
+    /// moved (`PhotoAnalysis.panLink`). `Culler.panoramas` chains them.
+    func linkPanoramas(progress: @escaping (Progress) -> Void) async throws {
+        let ordered = photos.compactMap { p in analyses[p.name].map { (p, $0) } }
+            .sorted { ($0.1.captureDate, $0.0.name) < ($1.1.captureDate, $1.0.name) }
+        var todo: [(Photo, Photo)] = []
+        for (prev, cur) in zip(ordered, ordered.dropFirst()) {
+            let (pPhoto, pa) = prev, (cPhoto, ca) = cur
+            guard ca.captureDate.timeIntervalSince(pa.captureDate) <= 5, ca.panLink?.previous != pPhoto.name,
+                  ca.metadata?.exposureBias == pa.metadata?.exposureBias else { continue }
+            if let a = pa.featurePrint, let b = ca.featurePrint, let d = a.distance(to: b), d < 0.12 { continue }
+            todo.append((pPhoto, cPhoto))
+        }
+        guard !todo.isEmpty else { return }
+        progress(Progress(done: 0, total: todo.count, current: nil, refining: true))
+        for (i, (prev, cur)) in todo.enumerated() {
+            try Task.checkCancellation()
+            let shift = (try? Analyzer.translation(from: prev, to: cur)) ?? .zero
+            if var a = analyses[cur.name] {
+                a.panLink = PanLink(previous: prev.name, dx: Double(shift.dx), dy: Double(shift.dy))
+                analyses[cur.name] = a
+                store.setAnalysis(a, for: cur)
+            }
+            progress(Progress(done: i + 1, total: todo.count, current: cur.name, refining: true))
+        }
+        try store.saveAnalyses()
     }
 
     /// Measures the top frames of every multi-frame group at full detail
@@ -122,8 +152,13 @@ public final class CullSession {
     /// Cheap: no image work, so changing the preset is instant.
     @discardableResult
     public func decide(preset: Preset) throws -> CullResult {
-        self.preset = preset
-        result = Culler.cull(analyses, preset: preset)
+        try decide(settings: preset.settings)
+    }
+
+    @discardableResult
+    public func decide(settings: CullSettings) throws -> CullResult {
+        self.settings = settings
+        result = Culler.cull(analyses, settings: settings, overrides: store.groupOverrides)
         try syncFolders()
         return result
     }
@@ -133,6 +168,29 @@ public final class CullSession {
     }
 
     public func isManual(_ name: String) -> Bool { store.placements[name] != nil }
+
+    public enum Regroup { case separate, splitHere, joinPrevious }
+
+    /// Fixes the grouping of `name` by hand, then re-decides.
+    public func regroup(_ name: String, _ action: Regroup) throws {
+        var o = store.groupOverrides
+        o.breaks.remove(name); o.joins.remove(name); o.separated.remove(name)
+        switch action {
+        case .separate: o.separated.insert(name)
+        case .splitHere: o.breaks.insert(name)
+        case .joinPrevious: o.joins.insert(name)
+        }
+        try store.setGroupOverrides(o)
+        try decide(settings: settings)
+    }
+
+    /// Hands grouping of `name` back to the rules.
+    public func clearGroupOverride(_ name: String) throws {
+        var o = store.groupOverrides
+        o.breaks.remove(name); o.joins.remove(name); o.separated.remove(name)
+        try store.setGroupOverrides(o)
+        try decide(settings: settings)
+    }
 
     /// Pins a photo to a folder by hand. Pass nil to hand it back to the engine.
     public func move(_ name: String, to folder: Folder?) throws {

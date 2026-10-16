@@ -6,8 +6,8 @@ final class CullingTests: XCTestCase {
         let gate = Preset.balanced.gate
         XCTAssertNil(Scorer.score(Fixtures.analysis(), gate: gate).rejection)
         XCTAssertEqual(Scorer.score(Fixtures.analysis(focus: 1), gate: gate).rejection, "Out of focus")
-        XCTAssertEqual(Scorer.score(Fixtures.analysis(highlightClip: 0.5), gate: gate).rejection, "Blown highlights")
-        XCTAssertEqual(Scorer.score(Fixtures.analysis(shadowClip: 0.8), gate: gate).rejection, "Severely underexposed")
+        XCTAssertEqual(Scorer.score(Fixtures.analysis(aesthetics: 0.4, highlightClip: 0.5), gate: gate).rejection, "Blown highlights")
+        XCTAssertEqual(Scorer.score(Fixtures.analysis(aesthetics: 0.4, shadowClip: 0.8), gate: gate).rejection, "Severely underexposed")
         // Soft subject, but something in the frame is sharp: not a miss.
         var bokeh = Fixtures.analysis(focus: 1)
         bokeh.globalFocus = 60
@@ -112,6 +112,59 @@ final class CullingTests: XCTestCase {
         var open = Fixtures.analysis(date: 0.3, aesthetics: 0.6, faces: [Fixtures.face(quality: 0.3)])
         open.detailFocus = 5
         XCTAssertEqual(Culler.cull(["blink": blink, "open": open], preset: .balanced).groups, [["open", "blink"]])
+    }
+
+    func testSmileSizeFromMouthShape() {
+        XCTAssertEqual(Scorer.smile(MouthShape(widthRatio: 0.8, cornerLift: -0.05, openness: 0.4)), 0, accuracy: 1e-9) // crying
+        XCTAssertEqual(Scorer.smile(MouthShape(widthRatio: 0.8, cornerLift: 0.0, openness: 0.4)), 0, accuracy: 1e-9)   // open, flat
+        let gentle = Scorer.smile(MouthShape(widthRatio: 0.8, cornerLift: 0.11, openness: 0.05))
+        let laugh = Scorer.smile(MouthShape(widthRatio: 0.8, cornerLift: 0.2, openness: 0.35))
+        XCTAssertTrue((0.3..<0.6).contains(gentle))
+        XCTAssertEqual(laugh, 1, accuracy: 1e-9)
+    }
+
+    func testMouthShapeIsTiltInvariant() {
+        // A smiling mouth, then the same face rotated 30°.
+        let eyes = ([CGPoint(x: -1, y: 1)], [CGPoint(x: 1, y: 1)])
+        let outer = [CGPoint(x: -0.8, y: -0.8), CGPoint(x: 0, y: -0.9), CGPoint(x: 0.8, y: -0.8), CGPoint(x: 0, y: -1.2)]
+        let inner = [CGPoint(x: 0, y: -0.95), CGPoint(x: 0, y: -1.05)]
+        let flat = MouthShape(leftEye: eyes.0, rightEye: eyes.1, outerLips: outer, innerLips: inner)!
+        let r = CGFloat.pi / 6
+        func rot(_ p: CGPoint) -> CGPoint { CGPoint(x: p.x * cos(r) - p.y * sin(r), y: p.x * sin(r) + p.y * cos(r)) }
+        let tilted = MouthShape(leftEye: eyes.0.map(rot), rightEye: eyes.1.map(rot), outerLips: outer.map(rot), innerLips: inner.map(rot))!
+        XCTAssertGreaterThan(flat.cornerLift, 0.1)
+        XCTAssertEqual(flat.cornerLift, tilted.cornerLift, accuracy: 1e-9)
+        XCTAssertEqual(flat.widthRatio, tilted.widthRatio, accuracy: 1e-9)
+        // Vision's eye order doesn't matter.
+        let swapped = MouthShape(leftEye: eyes.1, rightEye: eyes.0, outerLips: outer, innerLips: inner)!
+        XCTAssertEqual(flat.cornerLift, swapped.cornerLift, accuracy: 1e-9)
+    }
+
+    func testBigSmileIsKeptOutOfTrash() {
+        let blurryLaugh = Fixtures.analysis(focus: 1, faces: [Fixtures.face(smile: 0.9)])
+        let blurryNeutral = Fixtures.analysis(date: 1000, focus: 1, faces: [Fixtures.face(smile: 0.1)])
+        let r = Culler.cull(["laugh": blurryLaugh, "neutral": blurryNeutral, "ok": Fixtures.analysis(date: 2000)], preset: .balanced)
+        XCTAssertEqual(r.decisions["laugh"]?.folder, .review)
+        XCTAssertEqual(r.decisions["laugh"]?.reasons, ["Big smile: kept out of Trash", "Out of focus"])
+        XCTAssertEqual(r.decisions["neutral"]?.folder, .trash)
+    }
+
+    func testBigSmileDuplicateStaysInReview() {
+        var analyses: [String: PhotoAnalysis] = [:]
+        for i in 0..<5 { analyses["f\(i)"] = Fixtures.analysis(date: Double(i) * 0.2, aesthetics: 0.9 - Double(i) * 0.02, faces: [Fixtures.face(smile: 0.2)]) }
+        analyses["f4"] = Fixtures.analysis(date: 0.8, aesthetics: 0.82, faces: [Fixtures.face(smile: 0.9, rect: NormRect(x: 0.4, y: 0.3, width: 0.2, height: 0.25))])
+        let r = Culler.cull(analyses, preset: .strict)
+        XCTAssertEqual(r.decisions["f3"]?.folder, .trash)
+        XCTAssertNotEqual(r.decisions["f4"]?.folder, .trash)
+    }
+
+    func testBigSmileBecomesMomentInAPickedGroup() {
+        let pick = Fixtures.analysis(date: 0, aesthetics: 0.95, faces: [Fixtures.face(quality: 0.7, smile: 0.4)])
+        let laugh = Fixtures.analysis(date: 0.3, aesthetics: 0.85, faces: [Fixtures.face(quality: 0.6, smile: 0.95)])
+        let r = Culler.cull(["pick": pick, "laugh": laugh], preset: .balanced)
+        XCTAssertEqual(r.decisions["pick"]?.folder, .picks)
+        XCTAssertEqual(r.decisions["laugh"]?.folder, .moments)
+        XCTAssertEqual(r.decisions["laugh"]?.reasons.first, "Big smile")
     }
 
     func testBlinkingFrameIsNeverAPick() {

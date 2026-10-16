@@ -1,7 +1,11 @@
 import Foundation
 import KeepersCore
 
-// keepers-eval <folder> [--preset strict|balanced|lenient] [--fresh] [--signals]
+// keepers-eval <folder> [--preset strict|balanced|lenient] [--fresh] [--signals] [--expect file.json]
+//
+// --expect: a JSON object of photo name → expected folder ("Top Picks",
+// "Moments", "Review", "Trash"), or "not Trash". Exits 1 on any mismatch, so a
+// labeled set can guard scoring changes (in CI or before a release).
 //
 // Analyzes a folder like the app does (sharing its cache), prints the folder
 // decisions, and, when the folder has hand-made placements from the app,
@@ -40,7 +44,7 @@ for (g, ids) in result.groups.enumerated() {
             print([name, f(s.quality), f(s.sharpness), f(a.subjectFocus), f(a.globalFocus), f(s.exposure),
                    f(a.exposure.highlightClip), f(a.exposure.shadowClip), f(s.aesthetics),
                    "\(a.subjectFaces.count)/\(a.faces.count)", f(s.face),
-                   p?.smiling.map { $0 ? "y" : "n" } ?? "-", p?.eyesClosed.map { $0 ? "y" : "n" } ?? "-",
+                   f(s.smile), p?.eyesClosed.map { $0 ? "y" : "n" } ?? "-",
                    "\(g)", d.folder.rawValue, d.reasons.joined(separator: "; ")].joined(separator: "\t"))
         }
     }
@@ -51,7 +55,7 @@ if showSignals {
         let a = session.analyses[name]!, s = result.scores[name]!
         print([name, f(s.quality), f(s.sharpness), f(a.subjectFocus), f(a.globalFocus), f(s.exposure),
                f(a.exposure.highlightClip), f(a.exposure.shadowClip), f(s.aesthetics),
-               "\(a.subjectFaces.count)/\(a.faces.count)", f(s.face), "-", "-", "-", "Trash",
+               "\(a.subjectFaces.count)/\(a.faces.count)", f(s.face), f(s.smile), "-", "-", result.decisions[name]!.folder.rawValue,
                result.decisions[name]!.reasons.joined(separator: "; ")].joined(separator: "\t"))
     }
 }
@@ -73,4 +77,21 @@ if !manual.isEmpty {
     }
     print("\nAgreement with \(manual.count) hand placements: \(agree)/\(manual.count)")
     for (k, v) in confusion.sorted(by: { $0.key < $1.key }) { print("  engine \(k): \(v)") }
+}
+
+if let i = args.firstIndex(of: "--expect"), args.indices.contains(i + 1) {
+    let url = URL(fileURLWithPath: args[i + 1])
+    guard let expected = try? JSONDecoder().decode([String: String].self, from: Data(contentsOf: url)) else {
+        FileHandle.standardError.write("can't read \(url.path)\n".data(using: .utf8)!)
+        exit(2)
+    }
+    var failures: [String] = []
+    for (name, want) in expected.sorted(by: { $0.key < $1.key }) {
+        guard let got = result.decisions[name]?.folder.rawValue else { failures.append("\(name): missing"); continue }
+        let ok = want.hasPrefix("not ") ? got != String(want.dropFirst(4)) : got == want
+        if !ok { failures.append("\(name): expected \(want), got \(got)") }
+    }
+    print("\nExpectations: \(expected.count - failures.count)/\(expected.count) met")
+    failures.forEach { print("  ✗ \($0)") }
+    if !failures.isEmpty { exit(1) }
 }

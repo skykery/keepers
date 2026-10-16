@@ -29,14 +29,22 @@ Photos land in four folders inside your source folder:
 
 ```
 Top Picks/   — the best frame of the strongest moments
-Moments/     — great expressions (smiling, eyes open) from moments that didn't make Top Picks
+Moments/     — the biggest smiles and laughs, even when technically softer
 Review/      — everything else, with similar shots grouped and ranked
-Trash/       — out of focus, blown out, or black; plus weaker duplicates of a better frame
+Trash/       — out of focus, blown out, or black; plus weaker duplicates of a better frame. Never a big smile.
 ```
 
 Each folder contains symlinks back to the originals. Drag one out (to Lightroom, iCloud, a thumb drive) and macOS gives you the real file, not the shortcut. The links are relative, so they keep working if you move or rename the shoot folder or the drive it's on.
 
 Changing the preset later re-sorts instantly, with no re-analysis. Photos you moved by hand stay where you put them.
+
+## Working with other apps
+
+- **Lightroom Classic, Capture One, Bridge:** File → Write Ratings to XMP Sidecars writes `IMG_001.xmp` next to each photo: Top Picks ★★★★★ Green, Moments ★★★★ Yellow, Review unrated, Trash rejected (−1) Red. Import the folder and filter by stars or label. Existing sidecars keep their develop settings. Lightroom reads sidecars only for RAW files (not JPEG or DNG, whose metadata it reads from the file itself).
+- **Export:** File → Export Top Picks (and Moments) copies the originals, with RAW+JPEG pairs and sidecars, to a folder you choose. Nothing is overwritten; re-exporting skips identical files.
+- **Clean up:** File → Move Trash Originals to the Finder Trash, after reviewing Trash. Restorable from the Finder until you empty it.
+- **Memory cards:** insert a card and Keepers offers to copy its photos into a new folder (`~/Pictures/<date> <card>` by default), then starts culling.
+- **Finder:** right-click a folder → Open With → Keepers, or Quick Actions / Services → Cull with Keepers, or drop a folder on the Dock icon.
 
 ## Keyboard shortcuts
 
@@ -91,9 +99,9 @@ Releases: [`docs/RELEASING.md`](docs/RELEASING.md). History: [`CHANGELOG.md`](CH
 
 ## Privacy
 
-- No telemetry. No analytics. No accounts. No network access.
+- No telemetry. No analytics. No accounts. No network access, unless you turn on Keepers → Check for Updates Automatically (or choose Check for Updates…), which asks GitHub for the latest release and nothing else.
 - All analysis runs on your Mac with Apple's Vision and Core Image frameworks.
-- Keepers writes only inside the folder you choose: the four output folders and a `.keepers/` cache.
+- Keepers writes only inside the folder you choose (the four output folders and a `.keepers/` cache), plus what you explicitly ask for: XMP sidecars next to your photos, exports and card imports to a folder you pick, and moving Trash's originals to the Finder Trash after a confirmation.
 
 ## License
 

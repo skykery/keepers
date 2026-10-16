@@ -23,10 +23,57 @@ step for that.
   the viewer.
 - Full-resolution check of each burst's top three frames; the sharpest
   wins ties ("Sharpest of its group at full resolution").
+- Smile size (0–100) from Vision face landmarks, shown in the sidebar and
+  on face crops. Photos with a big smile are never sent to Trash; they go
+  to Review with "Big smile: kept out of Trash".
+- Write Ratings to XMP Sidecars: stars and color labels Lightroom
+  Classic, Capture One, and Bridge read on import. Existing sidecars keep
+  their other settings.
+- Export Top Picks (and Moments) to a folder, with RAW+JPEG pairs and
+  sidecars; never overwrites.
+- Move Trash Originals to the Finder Trash, with a confirmation.
+- Memory cards: an inserted card is offered for import into a new folder,
+  then culling starts.
+- Finder: Open With → Keepers on folders, Quick Actions / Services →
+  Cull with Keepers, and folder drops on the Dock icon.
+- Exposure brackets are detected (exposure compensation stepping within
+  2 s) and kept together, following their 0 EV frame; their frames never
+  fail on exposure.
+- Panorama sequences are detected (frames shifting one way, measured with
+  Vision image registration) and go to Review together, never Trash.
+- Where the camera focused (Nikon, some Olympus) sets the subject when
+  there are no faces; F outlines it in the sidebar.
+- Cats and dogs: Vision's animal detection sets the subject, its eyes when
+  found (macOS 14+).
+- Low-key and high-key photos with a strong aesthetics score aren't
+  trashed for clipping.
+- Group shots: fewer people blinking ranks higher; "Everyone's eyes open".
+- Custom preset: Top Picks share, similar shots kept, focus strictness,
+  and duplicate gap, applied live.
+- Learn From My Choices (Keepers menu): manual moves are logged locally and
+  the scoring weights that best match them can be switched on.
+- Fix grouping by hand: Separate This Shot, Split Group Here, Join
+  Previous Shot (sidebar, Similar shots).
+- `keepers-eval --expect file.json`: fails when folders differ from a
+  labeled set, for calibration checks.
+- Include subfolders: a shoot split into folders (per card or per day) is
+  culled as one; links carry the subfolder (`Day 2 - IMG_001.ORF`).
+- Keepers 1.x placements: a folder sorted with 1.x offers, once, to import
+  them as manual placements.
+- Opt-in update check (Keepers menu), daily at launch when enabled. Off by
+  default; it is the only network request Keepers makes.
+- VoiceOver labels for photos, signal bars, faces, and icon buttons.
+- View text is collected in a String Catalog (`scripts/update_strings.py`).
+- Homebrew cask in `packaging/homebrew/keepers.rb`, ready for a tap.
 
 ### Changed
 
 - Within a group, frames with a flaw (closed eyes) rank after flawless ones.
+- Keepers uses a single window; folders from Finder open in it.
+- Moments picks the biggest smile of each group, and can take a big smile
+  from a group whose best frame is a Top Pick.
+- Folders analyzed by an earlier version are re-analyzed once, to pick up
+  smiles, pets, focus points, and exposure compensation.
 
 ### Fixed
 
@@ -166,6 +213,11 @@ Intel, built on one GitHub-hosted runner.
 ### Changed
 
 - Within a group, frames with a flaw (closed eyes) rank after flawless ones.
+- Keepers uses a single window; folders from Finder open in it.
+- Moments picks the biggest smile of each group, and can take a big smile
+  from a group whose best frame is a Top Pick.
+- Folders analyzed by an earlier version are re-analyzed once, to pick up
+  smiles, pets, focus points, and exposure compensation.
 
 ### Fixed
 

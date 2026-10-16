@@ -11,7 +11,7 @@ Keepers is a **single-user, local-only Mac app**. The threat model assumes:
 - The user runs the app on their own machine.
 - The user's photos are not malicious — they're shots from the user's own camera or trusted sources.
 
-Keepers has no server, no local HTTP API, and no network code. It reads the folder the user chooses and writes only inside it (the four output folders and `.keepers/`).
+Keepers has no server and no local HTTP API. Its only network request is the opt-in update check: a GET to `api.github.com/repos/skykery/keepers/releases/latest`, sending nothing but the request itself, when the user enables it (at most daily) or chooses Check for Updates…. It reads the folder the user chooses and writes only inside it (the four output folders and `.keepers/`), plus what the user explicitly asks for (see below).
 
 ## Hardened runtime
 
@@ -31,6 +31,12 @@ On macOS 15+ every model is built into macOS. On macOS 13–14 an optional aesth
 
 - Symlinks in `Top Picks/`, `Moments/`, `Review/`, `Trash/` inside the chosen folder. The organizer only removes symlinks it finds in those four folders, and never touches regular files there or the originals.
 - `.keepers/analysis.json` and `.keepers/placements.json`, written atomically.
+
+Only when the user asks, with a confirmation or a chosen destination:
+
+- XMP sidecars (`<name>.xmp`) next to the originals. Existing sidecars are parsed and only `xmp:Rating` and `xmp:Label` change.
+- Copies in an export or card-import destination. Existing files are never overwritten; clashes get a numbered name.
+- Moving originals to the Finder Trash (`FileManager.trashItem`), never deleting them.
 
 ## Reviewing the code
 

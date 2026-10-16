@@ -26,7 +26,7 @@ public struct FolderOrganizer {
             let dir = url(for: folder)
             try fm.createDirectory(at: dir, withIntermediateDirectories: true)
             for (photo, f) in placement where f == folder {
-                for file in photo.files { wanted[folder, default: [:]][file.lastPathComponent] = Self.relativePath(to: file, from: dir) }
+                for file in photo.files { wanted[folder, default: [:]][photo.linkName(for: file)] = Self.relativePath(to: file, from: dir) }
             }
         }
         for folder in Folder.allCases {
@@ -49,14 +49,14 @@ public struct FolderOrganizer {
         let fm = FileManager.default
         for other in Folder.allCases where other != folder {
             for file in photo.files {
-                let link = url(for: other).appendingPathComponent(file.lastPathComponent)
+                let link = url(for: other).appendingPathComponent(photo.linkName(for: file))
                 if Self.isSymlink(link) { try fm.removeItem(at: link) }
             }
         }
         let dir = url(for: folder)
         try fm.createDirectory(at: dir, withIntermediateDirectories: true)
         for file in photo.files {
-            let link = dir.appendingPathComponent(file.lastPathComponent)
+            let link = dir.appendingPathComponent(photo.linkName(for: file))
             let target = Self.relativePath(to: file, from: dir)
             if Self.isSymlink(link), Self.destination(of: link) != target { try fm.removeItem(at: link) }
             try self.link(link, to: target)

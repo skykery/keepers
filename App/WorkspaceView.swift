@@ -37,12 +37,25 @@ struct WorkspaceView: View {
                 .labelsHidden()
             }
             ToolbarItemGroup(placement: .primaryAction) {
-                Picker("Preset", selection: $model.preset) {
-                    ForEach(Preset.allCases) { Text($0.title).tag($0) }
+                Picker("Preset", selection: $model.selectivity) {
+                    ForEach(AppModel.Selectivity.all) { Text($0.title).tag($0) }
                 }
                 .help("How selective Top Picks is. Your manual moves are kept.")
-                Button { model.reveal(model.tab) } label: { Label("Show in Finder", systemImage: "folder") }
-                    .help("Show \(model.tab.rawValue) in Finder")
+                if model.selectivity == .custom { CustomSettingsButton() }
+                Menu {
+                    Button("Export Top Picks…") { model.export([.picks]) }
+                    Button("Export Top Picks and Moments…") { model.export([.picks, .moments]) }
+                    Button("Write Ratings to XMP Sidecars…") { model.writeRatings() }
+                    Divider()
+                    Button("Show \(model.tab.rawValue) in Finder") { model.reveal(model.tab) }
+                    Divider()
+                    Button("Move Trash Originals to the Finder Trash…") { model.moveTrashToFinderTrash() }
+                        .disabled(model.count(.trash) == 0)
+                } label: {
+                    Label("Share", systemImage: "square.and.arrow.up")
+                }
+                .disabled(!model.canAct)
+                .help("Export, write ratings for Lightroom and Capture One, or empty Trash")
                 Button { model.inspectorVisible.toggle() } label: { Label("Details", systemImage: "sidebar.right") }
                     .help("Show or hide details (Return)")
             }
@@ -243,6 +256,21 @@ struct ThumbnailCell: View {
         .background(RoundedRectangle(cornerRadius: 9).fill(selected ? Color.accentColor.opacity(0.25) : .clear))
         .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(selected ? Color.accentColor : .clear, lineWidth: 2))
         .contentShape(Rectangle())
+        // VoiceOver reads one sentence per photo instead of each badge.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilityText)
+        .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
+        .accessibilityHint("Space for full screen, P M R X to move")
+    }
+
+    private var accessibilityText: String {
+        var parts = [item.photo.name]
+        if let q = item.score?.quality { parts.append("quality \(Int((q * 100).rounded()))") }
+        if let d = item.decision, d.groupSize > 1 { parts.append("\(d.rankInGroup) of \(d.groupSize) similar shots") }
+        if item.isManual { parts.append("placed by you") }
+        if let flaws = item.score?.flaws, !flaws.isEmpty { parts.append(flaws.joined(separator: ", ")) }
+        if !item.photo.companions.isEmpty { parts.append("RAW plus JPEG") }
+        return parts.joined(separator: ", ")
     }
 
     @ViewBuilder private var badges: some View {

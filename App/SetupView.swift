@@ -14,7 +14,31 @@ struct SetupView: View {
                     .foregroundStyle(.secondary)
             }
 
+            if let update = model.availableUpdate {
+                HStack(spacing: 10) {
+                    Image(systemName: "arrow.down.circle.fill").font(.title2).foregroundStyle(.tint)
+                    Text("Keepers \(update.version) is available.").font(.headline)
+                    Spacer()
+                    Button("Download") { NSWorkspace.shared.open(update.page) }
+                }
+                .padding(14)
+                .background(RoundedRectangle(cornerRadius: 12).fill(Color.accentColor.opacity(0.12)))
+            }
+            ForEach(model.cards) { card in
+                HStack(spacing: 10) {
+                    Image(systemName: "sdcard.fill").font(.title2).foregroundStyle(.tint)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Card “\(card.name)” is connected").font(.headline)
+                        Text("Copy its photos to a new folder and start culling.").font(.caption).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button("Import…") { model.importCard(card) }
+                }
+                .padding(14)
+                .background(RoundedRectangle(cornerRadius: 12).fill(Color.accentColor.opacity(0.12)))
+            }
             folderCard
+            if !model.legacyPlacements.isEmpty { legacyBanner }
             if model.folderURL != nil, model.summary.photos > 0 {
                 presetPicker
                 startButtons
@@ -78,6 +102,11 @@ struct SetupView: View {
                 Spacer()
             }
         }
+        if model.folderURL != nil {
+            Toggle("Include subfolders", isOn: $model.includeSubfolders)
+                .toggleStyle(.checkbox)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 
     private func stat(_ value: String, _ label: String) -> some View {
@@ -85,6 +114,21 @@ struct SetupView: View {
             Text(value).font(.title3.monospacedDigit().weight(.semibold))
             Text(label).foregroundStyle(.secondary)
         }
+    }
+
+    private var legacyBanner: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label("This folder was sorted with Keepers 1.x", systemImage: "clock.arrow.circlepath").font(.headline)
+            Text("Import its \(model.legacyPlacements.count) placements as your own choices? Keepers 1.x also saved its automatic decisions there, so imported photos stay where 1.x put them instead of being re-sorted.")
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Spacer()
+                Button("Don't Import") { model.resolveLegacy(importing: false) }
+                Button("Import") { model.resolveLegacy(importing: true) }
+            }
+        }
+        .padding(14)
+        .background(RoundedRectangle(cornerRadius: 12).fill(.yellow.opacity(0.12)))
     }
 
     private var recents: some View {
@@ -110,12 +154,16 @@ struct SetupView: View {
     private var presetPicker: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("How selective?").font(.headline)
-            Picker("How selective?", selection: $model.preset) {
-                ForEach(Preset.allCases) { Text($0.title).tag($0) }
+            HStack {
+                Picker("How selective?", selection: $model.selectivity) {
+                    ForEach(AppModel.Selectivity.all) { Text($0.title).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .fixedSize()
+                if model.selectivity == .custom { CustomSettingsButton() }
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            Text("\(model.preset.summary). You can change this later without re-analyzing.")
+            Text("\(model.selectivitySummary). You can change this later without re-analyzing.")
                 .font(.caption).foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -143,7 +191,7 @@ struct ProcessingView: View {
 
     var body: some View {
         VStack(spacing: 16) {
-            Text(model.progress.refining ? "Checking similar shots at full resolution" : "Analyzing photos")
+            Text(model.progress.refining ? "Checking bursts and sequences" : "Analyzing photos")
                 .font(.title2.weight(.semibold))
             ProgressView(value: Double(model.progress.done), total: Double(max(model.progress.total, 1)))
                 .frame(width: 360)

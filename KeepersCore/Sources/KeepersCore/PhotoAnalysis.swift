@@ -12,6 +12,9 @@ public struct PhotoAnalysis: Codable, Hashable, Sendable {
         public var focus: Double
         public var smiling: Bool?
         public var eyesClosed: Bool?
+        /// Mouth geometry from Vision landmarks; `Scorer.smile` turns it into
+        /// a 0...1 smile size. Nil when landmarks weren't found.
+        public var mouth: MouthShape?
         /// Large enough to be what the photo is about, rather than a bystander.
         public var isSubject: Bool
     }
@@ -39,6 +42,18 @@ public struct PhotoAnalysis: Codable, Hashable, Sendable {
     /// available image without downscaling. Only meaningful compared with
     /// other frames of the same burst; measured for each group's top frames.
     public var detailFocus: Double?
+    /// Exposure compensation and camera focus point.
+    public var metadata: CaptureMetadata?
+    /// Cats and dogs Vision found (it recognizes only those two).
+    public var animals: [NormRect]?
+    /// Movement from the previous frame when it overlaps like a panorama
+    /// sequence (see `CullSession.linkPanoramas`).
+    public var panLink: PanLink?
+
+    /// Which version of the analysis produced this. Older ones are redone.
+    public var revision: Int?
+    /// 1: 2.0–2.2. 2: smiles, pets, focus point, exposure bias.
+    public static let currentRevision = 2
 
     public var subjectFaces: [Face] { faces.filter(\.isSubject) }
 
@@ -50,6 +65,64 @@ public struct PhotoAnalysis: Codable, Hashable, Sendable {
     private func prominence(_ f: Face) -> Double {
         let off = hypot(f.rect.midX - 0.5, f.rect.midY - 0.5)
         return f.rect.area * (1.2 - off)
+    }
+}
+
+/// The previous frame of a possible panorama, and how far the view moved
+/// from it (fractions of the frame; + is right / down).
+public struct PanLink: Codable, Hashable, Sendable {
+    public var previous: String
+    public var dx: Double
+    public var dy: Double
+    public init(previous: String, dx: Double, dy: Double) { self.previous = previous; self.dx = dx; self.dy = dy }
+}
+
+/// Mouth geometry in a face-aligned frame (eye line horizontal), measured
+/// relative to the face so it doesn't depend on size or head tilt.
+public struct MouthShape: Codable, Hashable, Sendable {
+    /// Mouth width / distance between the eyes. Wider in a smile.
+    public var widthRatio: Double
+    /// How far the mouth corners sit above the lips' midline, as a fraction of
+    /// mouth width. Positive in a smile, negative in a frown.
+    public var cornerLift: Double
+    /// Gap between the inner lips / mouth width. Large when laughing.
+    public var openness: Double
+
+    public init(widthRatio: Double, cornerLift: Double, openness: Double) {
+        self.widthRatio = widthRatio; self.cornerLift = cornerLift; self.openness = openness
+    }
+
+    /// From landmark points in image coordinates (y up, as Vision gives them).
+    public init?(leftEye: [CGPoint], rightEye: [CGPoint], outerLips: [CGPoint], innerLips: [CGPoint]) {
+        guard !leftEye.isEmpty, !rightEye.isEmpty, outerLips.count >= 4 else { return nil }
+        func centroid(_ p: [CGPoint]) -> CGPoint {
+            CGPoint(x: p.map(\.x).reduce(0, +) / CGFloat(p.count), y: p.map(\.y).reduce(0, +) / CGFloat(p.count))
+        }
+        // Order the eyes by x so the axis points right whatever Vision calls "left".
+        let e = [centroid(leftEye), centroid(rightEye)].sorted { $0.x < $1.x }
+        let dx = e[1].x - e[0].x, dy = e[1].y - e[0].y
+        let eyeDistance = hypot(dx, dy)
+        guard eyeDistance > 0 else { return nil }
+        let angle = atan2(dy, dx)
+        let cosA = cos(-angle), sinA = sin(-angle)
+        func align(_ p: CGPoint) -> CGPoint {
+            CGPoint(x: p.x * cosA - p.y * sinA, y: p.x * sinA + p.y * cosA)
+        }
+        let outer = outerLips.map(align), inner = innerLips.map(align)
+        guard let left = outer.min(by: { $0.x < $1.x }), let right = outer.max(by: { $0.x < $1.x }) else { return nil }
+        let width = right.x - left.x
+        guard width > 0 else { return nil }
+        // The lips' midline: halfway between top and bottom near the center.
+        let midX = (left.x + right.x) / 2
+        let central = outer.filter { abs($0.x - midX) <= width * 0.2 }
+        guard let top = central.map(\.y).max(), let bottom = central.map(\.y).min() else { return nil }
+        let midline = (top + bottom) / 2
+        let innerCentral = inner.filter { abs($0.x - midX) <= width * 0.2 }
+        let gap = (innerCentral.map(\.y).max() ?? 0) - (innerCentral.map(\.y).min() ?? 0)
+
+        widthRatio = Double(width / eyeDistance)
+        cornerLift = Double(((left.y + right.y) / 2 - midline) / width)
+        openness = Double(max(0, gap) / width)
     }
 }
 

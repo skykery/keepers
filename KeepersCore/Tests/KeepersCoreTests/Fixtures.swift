@@ -71,19 +71,27 @@ enum Fixtures {
 
     static func analysis(date: TimeInterval = 0, focus: Double = 60, aesthetics: Double? = 0.7,
                          faces: [PhotoAnalysis.Face] = [], print: FeaturePrint? = nil,
-                         highlightClip: Double = 0, shadowClip: Double = 0, luminance: Double = 0.5) -> PhotoAnalysis {
+                         highlightClip: Double = 0, shadowClip: Double = 0, luminance: Double = 0.5,
+                         bias: Double? = nil, panLink: PanLink? = nil) -> PhotoAnalysis {
         PhotoAnalysis(
             captureDate: Date(timeIntervalSince1970: date), pixelWidth: 2048, pixelHeight: 1365,
             subject: NormRect(x: 0.2, y: 0.2, width: 0.6, height: 0.6),
             subjectFocus: focus, globalFocus: focus,
             exposure: .init(highlightClip: highlightClip, shadowClip: shadowClip, subjectLuminance: luminance),
-            aesthetics: aesthetics, isUtility: false, faces: faces, featurePrint: print
+            aesthetics: aesthetics, isUtility: false, faces: faces, featurePrint: print,
+            metadata: CaptureMetadata(exposureBias: bias), panLink: panLink, revision: PhotoAnalysis.currentRevision
         )
     }
 
     static func face(quality: Double = 0.6, smiling: Bool? = false, eyesClosed: Bool? = false,
+                     smile: Double? = nil,
                      rect: NormRect = NormRect(x: 0.4, y: 0.3, width: 0.2, height: 0.25)) -> PhotoAnalysis.Face {
         PhotoAnalysis.Face(rect: rect, quality: quality, focus: 60, smiling: smiling,
-                           eyesClosed: eyesClosed, isSubject: true)
+                           eyesClosed: eyesClosed, mouth: smile.map(mouth), isSubject: true)
+    }
+
+    /// A mouth whose `Scorer.smile` is `smile` (0...1): corners lifted, closed.
+    static func mouth(smile: Double) -> MouthShape {
+        MouthShape(widthRatio: 0.8, cornerLift: 0.02 + 0.18 * min(1, smile / 0.75), openness: smile > 0.75 ? (smile - 0.75) / 0.25 * 0.35 : 0)
     }
 }

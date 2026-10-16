@@ -11,8 +11,11 @@ Every photo is decoded once at 2048 px on the long edge. RAW files use the camer
 | Measurement | How |
 |---|---|
 | Faces | Vision face detection with *face capture quality* (Apple's combined blur / lighting / pose / expression score). Faces smaller than 6% of the frame height, or under 40% of the largest face, are bystanders and ignored. |
-| Smile, closed eyes | Core Image face detector (`CIDetectorSmile`, `CIDetectorEyeBlink`), matched to Vision faces by overlap. |
-| Subject | Faces if any; otherwise Vision's attention saliency region; otherwise the central 70%. |
+| Smile size | Vision face landmarks: mouth geometry in a frame aligned to the eyes (see "Smiles" below). |
+| Closed eyes | Core Image face detector (`CIDetectorEyeBlink`), matched to Vision faces by overlap. Its smile flag is only a fallback when landmarks are missing. |
+| Subject | In order: faces; where the camera focused (when the file records it, see below); a cat or dog (Vision recognizes only those two), its eyes when Vision's animal pose finds them (macOS 14+); Vision's attention saliency region; the central 70%. |
+| Camera focus point | The autofocus point(s) used, from ImageIO's `AFInfo` (Nikon NEF and some Olympus ORF files in testing; other cameras' maker notes aren't exposed by macOS). The subject becomes 3× the point's size around it. |
+| Exposure compensation | EXIF exposure bias, for brackets. |
 | Focus energy | Gaussian-smoothed Laplacian, variance per tile, 90th-percentile tile (see below). Measured on the eye band of each subject face, else on the subject, and on the whole frame. |
 | Exposure | Fraction of pixels with any channel ≥ 250 (blown), fraction ≤ 8 (black), mean luminance of the subject. |
 | Aesthetics | macOS 15+: Vision `CalculateImageAestheticsScoresRequest`, `overallScore` mapped from −1…1 to 0…1. |
@@ -51,6 +54,30 @@ Without an aesthetics score (macOS 13–14, no optional model), the remaining we
 
 Face capture quality is **not** part of `quality`. Apple designed it for comparing shots of the same person, and it sits near 0.5 for most faces, so as an absolute signal it unfairly penalizes portraits against scenery. It is used to rank frames within a group (below).
 
+## Smiles
+
+For each face, Vision's landmarks give the eyes and the outer and inner lips. Rotated so the eyes are level (head tilt doesn't matter), three numbers are measured relative to the face:
+
+| Measure | Meaning |
+|---|---|
+| Corner lift | How far the mouth corners sit above the lips' midline, as a fraction of mouth width. Neutral and crying mouths are at or below zero; gentle smiles 0.08–0.13; laughs 0.18+. |
+| Openness | Gap between the inner lips / mouth width. |
+| Width ratio | Mouth width / distance between the eyes. Recorded, not scored: it varies too much with face shape and angle. |
+
+```
+smile = 0.75 × ramp(corner lift, 0.02 → 0.20) + 0.25 × ramp(openness, 0 → 0.35)   (openness counts only when corner lift > 0.05)
+```
+
+A photo's smile is the biggest among its subject faces. A smile of **0.75 or more is a big smile**: the photo is never sent to Trash (a failed frame or a weaker duplicate goes to Review with "Big smile: kept out of Trash"). **0.35 or more** counts as smiling for Moments.
+
+## Sequences
+
+**Exposure brackets.** Consecutive frames at most 2 s apart whose exposure compensation changes each time and spans at least 0.6 EV are a bracket. Its frames never fail on exposure, the base frame (closest to 0 EV) is judged like any photo, and the others follow it to the same folder: "Exposure bracket: −2, 0, +2 EV".
+
+**Panoramas.** For consecutive frames up to 5 s apart that don't look near-identical (feature-print distance ≥ 0.12), Vision's image registration measures how far the view moved. Three or more frames each shifted 12–90% of the frame in the same direction (sideways or vertical) are a panorama sequence. They go to Review together, as their own group, and are never trashed or treated as duplicates.
+
+**Panning.** A sharp subject against a motion-streaked background passes the focus gate on its own, because the gate checks the subject first.
+
 ## Hard gate → Trash
 
 Only clear technical failures:
@@ -61,11 +88,13 @@ Only clear technical failures:
 | More than 25% of pixels blown | Blown highlights |
 | More than 60% of pixels black | Severely underexposed |
 
+The two exposure rules don't apply to bracket frames, or when the aesthetics score is 0.65 or more: a low-key or high-key photo clips on purpose. Those get the note "Very dark (or bright), but looks intentional".
+
 Vision's `isUtility` flag (screenshots, documents) is recorded but not used: in testing it flagged ordinary still-life photos.
 
 ## Groups
 
-Photos are sorted by capture time. Each photo joins the previous one's group when they are at most 1.5 s apart (a burst), or at most 30 s apart and their feature prints are within cosine distance 0.25 (a re-take of the same frame). Within a group, frames rank by `quality + 0.5 × face capture quality`. Frames with a flaw (closed eyes, someone blinking) always rank after flawless ones.
+Photos are sorted by capture time. Each photo joins the previous one's group when they are at most 1.5 s apart (a burst), or at most 30 s apart and their feature prints are within cosine distance 0.25 (a re-take of the same frame). Within a group, frames rank by `quality + 0.5 × face capture quality`. Frames with a flaw (closed eyes, someone blinking) always rank after flawless ones, and among them, fewer closed eyes rank higher. In a group shot, a frame with everyone's eyes open says so ("Everyone's eyes open") when others in its group have someone blinking.
 
 ### Full-resolution check
 
@@ -81,8 +110,8 @@ Analysis runs on 2048 px images, where a slightly missed focus can look sharp. A
 
 1. **Trash**: anything failing the gate.
 2. **Top Picks**: the best frame of each group, ranked by quality across groups; the top *share × usable photos* (at least 1) that clear the floor and have no flaws.
-3. **Moments**: for groups without a pick, the frame with the best face quality where the main subject is smiling, eyes open, face quality ≥ 0.45. Capped at the same count as Top Picks.
-4. **Trash, weaker duplicates**: a frame that scores lower than its group's best *and* either ranks beyond the preset's "frames kept per group" or trails the best by the "duplicate gap" or more. Reason: "Weaker duplicate: #5 of 10 similar shots". A frame that ranks lower only because of face quality, but scores at least as high, is never trashed.
+3. **Moments**: per group, the frame with the biggest smile where the main subject smiles (≥ 0.35), eyes open, face quality ≥ 0.45. In a group whose best frame is a Top Pick, only a big smile (≥ 0.75) at least 0.2 bigger than the pick's qualifies. Capped at the same count as Top Picks.
+4. **Trash, weaker duplicates** (unless it has a big smile): a frame that scores lower than its group's best *and* either ranks beyond the preset's "frames kept per group" or trails the best by the "duplicate gap" or more. Reason: "Weaker duplicate: #5 of 10 similar shots". A frame that ranks lower only because of face quality, but scores at least as high, is never trashed.
 5. **Review**: everything else. Reasons show the rank in the group ("#3 of 10 similar shots") or why a group leader missed ("Below the quality bar", "Outranked by other shots").
 
 Folders you choose by hand are stored in `.keepers/placements.json` and always win. Press `U` to hand a photo back to the engine.

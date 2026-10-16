@@ -34,13 +34,79 @@ final class AppModel: ObservableObject {
     @Published var phase: Phase = .setup
     @Published var folderURL: URL?
     @Published var summary = FolderSummary()
-    /// Remembered across launches, so reopening a folder doesn't silently
-    /// re-sort it with a different preset.
-    @Published var preset: Preset = Preset(rawValue: UserDefaults.standard.string(forKey: "preset") ?? "") ?? .balanced {
+    /// Also cull photos in subfolders (one per card or per day).
+    @Published var includeSubfolders = UserDefaults.standard.bool(forKey: "includeSubfolders") {
         didSet {
-            UserDefaults.standard.set(preset.rawValue, forKey: "preset")
-            if phase == .workspace, preset != oldValue { redecide() }
+            UserDefaults.standard.set(includeSubfolders, forKey: "includeSubfolders")
+            if let folderURL, phase == .setup { open(folderURL) }
         }
+    }
+    /// Placements from a Keepers 1.x session in this folder, offered once.
+    @Published private(set) var legacyPlacements: [String: Folder] = [:]
+    /// Strict / Balanced / Lenient, or the photographer's own settings.
+    enum Selectivity: Hashable, Identifiable {
+        case preset(Preset)
+        case custom
+
+        static let all: [Selectivity] = [.preset(.strict), .preset(.balanced), .preset(.lenient), .custom]
+        var id: String { title }
+        var title: String {
+            switch self {
+            case .preset(let p): return p.title
+            case .custom: return "Custom"
+            }
+        }
+    }
+
+    /// Remembered across launches, so reopening a folder doesn't silently
+    /// re-sort it with different settings.
+    @Published var selectivity: Selectivity = {
+        let raw = UserDefaults.standard.string(forKey: "preset") ?? ""
+        return raw == "custom" ? .custom : .preset(Preset(rawValue: raw) ?? .balanced)
+    }() {
+        didSet {
+            switch selectivity {
+            case .preset(let p): UserDefaults.standard.set(p.rawValue, forKey: "preset")
+            case .custom: UserDefaults.standard.set("custom", forKey: "preset")
+            }
+            if phase == .workspace, selectivity != oldValue { redecide() }
+        }
+    }
+
+    @Published var customSettings: CullSettings = AppModel.loadJSON("customSettings") ?? Preset.balanced.settings {
+        didSet {
+            AppModel.saveJSON(customSettings, "customSettings")
+            if phase == .workspace, selectivity == .custom, customSettings != oldValue { redecide() }
+        }
+    }
+
+    /// Weights learned from manual moves (see `Taste`), used when enabled.
+    @Published var learnedWeights: ScoringWeights? = AppModel.loadJSON("learnedWeights") {
+        didSet { AppModel.saveJSON(learnedWeights, "learnedWeights"); if phase == .workspace { redecide() } }
+    }
+
+    var effectiveSettings: CullSettings {
+        var s: CullSettings
+        switch selectivity {
+        case .preset(let p): s = p.settings
+        case .custom: s = customSettings
+        }
+        if let learnedWeights { s.weights = learnedWeights }
+        return s
+    }
+
+    var selectivitySummary: String {
+        let s = effectiveSettings
+        return "Top \(Int((s.pickFraction * 100).rounded()))% of usable shots" + (learnedWeights != nil ? ", scored your way" : "")
+    }
+
+    static func loadJSON<T: Decodable>(_ key: String) -> T? {
+        UserDefaults.standard.data(forKey: key).flatMap { try? JSONDecoder().decode(T.self, from: $0) }
+    }
+
+    static func saveJSON<T: Encodable>(_ value: T?, _ key: String) {
+        if let value, let data = try? JSONEncoder().encode(value) { UserDefaults.standard.set(data, forKey: key) }
+        else { UserDefaults.standard.removeObject(forKey: key) }
     }
     @Published var progress = CullSession.Progress(done: 0, total: 0, current: nil)
     @Published var errorMessage: String?
@@ -54,6 +120,12 @@ final class AppModel: ObservableObject {
     @Published var selection: String?
     @Published var inspectorVisible = true
     @Published var showFailures = false
+    @Published var showTaste = false
+    /// Opt-in: the only network request Keepers makes.
+    @Published var checkForUpdates = UserDefaults.standard.bool(forKey: "checkForUpdates") {
+        didSet { UserDefaults.standard.set(checkForUpdates, forKey: "checkForUpdates") }
+    }
+    @Published var availableUpdate: ReleaseInfo?
     @Published private(set) var failures: [String: String] = [:]
     /// Full-screen viewer, and whether it compares a group side by side.
     enum Viewer { case single, compare }
@@ -65,6 +137,33 @@ final class AppModel: ObservableObject {
     /// Columns in the gallery grid, for ↑ / ↓. Set by the gallery's layout.
     var gridColumns = 1
 
+    /// A long file operation in progress (export, ratings, card import).
+    struct Activity {
+        var title: String
+        var done = 0
+        var total = 0
+        var cancellable = false
+    }
+    @Published var activity: Activity?
+    /// A finished operation's summary, shown as an alert.
+    struct Notice {
+        var title: String
+        var message: String
+        var reveal: URL?
+    }
+    /// Set with `show(_:)`, so a new notice never reuses a visible alert.
+    @Published var notice: Notice?
+
+    func show(_ new: Notice) {
+        guard notice != nil else { notice = new; return }
+        notice = nil
+        DispatchQueue.main.async { [weak self] in self?.notice = new }
+    }
+    /// Memory cards (volumes with a DCIM folder) currently mounted.
+    @Published private(set) var cards: [CardImport.Card] = []
+    var activityTask: Task<Void, Never>?
+    private var volumeObservers: [NSObjectProtocol] = []
+
     private(set) var session: CullSession?
     private var work: Task<Void, Never>?
     private var index: [String: Int] = [:]
@@ -73,14 +172,27 @@ final class AppModel: ObservableObject {
 
     init() {
         recentFolders = Self.loadRecents()
+        refreshCards()
+        let center = NSWorkspace.shared.notificationCenter
+        for name in [NSWorkspace.didMountNotification, NSWorkspace.didUnmountNotification] {
+            volumeObservers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor in self?.refreshCards() }
+            })
+        }
         // `open -a Keepers --args --open <folder>` starts on that folder.
         let args = ProcessInfo.processInfo.arguments
+        if checkForUpdates { checkForUpdate(manual: false) }
         if let i = args.firstIndex(of: "--open"), args.indices.contains(i + 1) {
             open(URL(fileURLWithPath: args[i + 1], isDirectory: true))
         }
     }
 
     var isProcessing: Bool { phase == .processing }
+    var isBusy: Bool { phase == .processing || activity != nil }
+    /// Workspace actions (export, ratings, trash) are available.
+    var canAct: Bool { phase == .workspace && activity == nil }
+
+    func refreshCards() { cards = CardImport.cards() }
 
     var visibleItems: [PhotoItem] { (names[tab] ?? []).compactMap(item) }
 
@@ -147,7 +259,7 @@ final class AppModel: ObservableObject {
         folderURL = url
         phase = .setup
         do {
-            let photos = try PhotoLibrary.scan(url)
+            let photos = try PhotoLibrary.scan(url, includeSubfolders: includeSubfolders)
             let store = SessionStore(outputDirectory: url)
             summary = FolderSummary(
                 photos: photos.count,
@@ -155,6 +267,7 @@ final class AppModel: ObservableObject {
                 pairs: photos.filter { !$0.companions.isEmpty }.count,
                 cached: photos.filter { store.analysis(for: $0) != nil }.count
             )
+            legacyPlacements = store.pendingLegacyPlacements(for: photos)
             remember(url)
         } catch {
             summary = FolderSummary()
@@ -162,21 +275,52 @@ final class AppModel: ObservableObject {
         }
     }
 
+    static var currentVersion: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0"
+    }
+
+    /// Asks GitHub for the latest release: on launch at most once a day when
+    /// enabled, or right away from the menu.
+    func checkForUpdate(manual: Bool) {
+        let last = UserDefaults.standard.double(forKey: "lastUpdateCheck")
+        guard manual || Date().timeIntervalSince1970 - last > 86_400 else { return }
+        Task {
+            var request = URLRequest(url: ReleaseInfo.latestURL)
+            request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+            let release = (try? await URLSession.shared.data(for: request)).flatMap { ReleaseInfo(json: $0.0) }
+            UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: "lastUpdateCheck")
+            if let release, release.isNewer(than: Self.currentVersion) {
+                availableUpdate = release
+            } else if manual {
+                show(Notice(title: release == nil ? "Couldn't check for updates" : "Keepers is up to date",
+                            message: release == nil ? "GitHub didn't answer. Try again later." : "You have the latest version, \(Self.currentVersion)."))
+            }
+        }
+    }
+
+    func resolveLegacy(importing: Bool) {
+        guard let url = folderURL else { return }
+        do {
+            try SessionStore(outputDirectory: url).resolveLegacyPlacements(legacyPlacements, importing: importing)
+            legacyPlacements = [:]
+        } catch { errorMessage = error.localizedDescription }
+    }
+
     func start(fresh: Bool) {
         guard let url = folderURL else { return }
         phase = .processing
         progress = .init(done: 0, total: summary.photos, current: nil)
-        let preset = self.preset
+        let settings = effectiveSettings
         work = Task {
             do {
-                let session = try CullSession(inputDirectory: url)
+                let session = try CullSession(inputDirectory: url, includeSubfolders: includeSubfolders)
                 // `analyze` is nonisolated, so it runs off the main actor;
                 // cancelling this task cancels it.
                 try await session.analyze(fresh: fresh) { p in
                     Task { @MainActor [weak self] in self?.progress = p }
                 }
                 try Task.checkCancellation()
-                try session.decide(preset: preset)
+                try session.decide(settings: settings)
                 self.session = session
                 self.failures = session.failures
                 undoStack = []; redoStack = []; updateUndoState()
@@ -265,7 +409,7 @@ final class AppModel: ObservableObject {
     private func redecide() {
         guard let session else { return }
         do {
-            try session.decide(preset: preset)
+            try session.decide(settings: effectiveSettings)
             reloadItems()
         } catch {
             errorMessage = error.localizedDescription
@@ -281,6 +425,8 @@ final class AppModel: ObservableObject {
         let visible = names[tab] ?? []
         let position = visible.firstIndex(of: item.id) ?? 0
         guard apply(Move(name: item.id, before: before, after: folder)) else { return }
+        // Every deliberate move teaches the scoring (Taste); undo doesn't count.
+        if let folder, let score = item.score { Taste.record(Taste.Sample(score, folder: folder)) }
         undoStack.append(Move(name: item.id, before: before, after: folder))
         redoStack = []
         updateUndoState()
@@ -324,6 +470,28 @@ final class AppModel: ObservableObject {
     private func updateUndoState() {
         canUndo = !undoStack.isEmpty
         canRedo = !redoStack.isEmpty
+    }
+
+    // MARK: Grouping by hand
+
+    func regroupSelection(_ action: CullSession.Regroup) {
+        guard let session, let name = selection else { return }
+        do {
+            try session.regroup(name, action)
+            reloadItems()
+        } catch { errorMessage = error.localizedDescription }
+    }
+
+    func resetGroupingOfSelection() {
+        guard let session, let name = selection else { return }
+        do {
+            try session.clearGroupOverride(name)
+            reloadItems()
+        } catch { errorMessage = error.localizedDescription }
+    }
+
+    func hasGroupOverride(_ name: String) -> Bool {
+        session?.store.groupOverrides.contains(name) ?? false
     }
 
     /// Shows `name` in its folder's tab and selects it.
