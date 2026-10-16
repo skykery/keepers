@@ -13,6 +13,14 @@ step for that.
 
 ### Added
 
+### Changed
+
+### Fixed
+
+## [2.1.0] - 2026-10-16
+
+### Added
+
 - `docs/ROADMAP.md`: planned features.
 
 ### Changed
