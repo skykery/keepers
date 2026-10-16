@@ -13,6 +13,14 @@ step for that.
 
 ### Added
 
+### Changed
+
+### Fixed
+
+## [2.2.0] - 2026-10-16
+
+### Added
+
 - ⌘Z / ⇧⌘Z undo and redo for moves (Edit menu).
 - ↑ / ↓ move a row in the grid.
 - Recent folders on the start screen and in File → Open Recent.
