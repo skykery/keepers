@@ -236,7 +236,9 @@ public enum PixelMetrics {
     }
 
     public struct Exposure: Codable, Hashable, Sendable {
-        /// Fraction of pixels with any channel at or near 255.
+        /// Fraction of pixels at or near pure white (every channel near 255).
+        /// A saturated color, like a deep blue sky, maxes out one channel
+        /// without losing detail, so it doesn't count.
         public var highlightClip: Double
         /// Fraction of pixels with luma at or near 0.
         public var shadowClip: Double
@@ -250,7 +252,7 @@ public enum PixelMetrics {
         px.rgba.withUnsafeBufferPointer { c in
             for i in 0..<n {
                 let r = c[i * 4], g = c[i * 4 + 1], b = c[i * 4 + 2]
-                if max(r, g, b) >= 250 { blown += 1 }
+                if min(r, g, b) >= 250 { blown += 1 }
                 if max(r, g, b) <= 8 { black += 1 }
             }
         }

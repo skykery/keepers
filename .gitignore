@@ -33,6 +33,7 @@ telemetry-id
 
 # Local sample data (never commit photo libraries)
 originals/
+test_raws/
 culled/
 22/
 .thumbnails/

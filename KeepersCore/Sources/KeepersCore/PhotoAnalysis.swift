@@ -53,7 +53,8 @@ public struct PhotoAnalysis: Codable, Hashable, Sendable {
     /// Which version of the analysis produced this. Older ones are redone.
     public var revision: Int?
     /// 1: 2.0–2.2. 2: smiles, pets, focus point, exposure bias.
-    public static let currentRevision = 2
+    /// 3: focus measured at the full working size; blown = pure white only.
+    public static let currentRevision = 3
 
     public var subjectFaces: [Face] { faces.filter(\.isSubject) }
 

@@ -158,6 +158,8 @@ final class ImageDocumentView: NSView {
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
+        // The last row and column of tiles are partial; keep them on the image.
+        layer?.masksToBounds = true
         layer?.addSublayer(imageLayer)
         layer?.addSublayer(mapLayer)
         imageLayer.contentsGravity = .resize
@@ -382,7 +384,7 @@ struct FocusOverlay: View {
                     guard s > 0.5 else { continue }
                     let rect = CGRect(x: CGFloat(1 + column * map.tile) * w, y: CGFloat(1 + row * map.tile) * h,
                                       width: CGFloat(map.tile) * w, height: CGFloat(map.tile) * h)
-                    context.fill(Path(rect), with: .color(Color(red: 0.15, green: 1, blue: 0.35).opacity((s - 0.5) * 2 * 0.6)))
+                    context.fill(Path(rect.intersection(CGRect(origin: .zero, size: size))), with: .color(Color(red: 0.15, green: 1, blue: 0.35).opacity((s - 0.5) * 2 * 0.6)))
                 }
             }
         }

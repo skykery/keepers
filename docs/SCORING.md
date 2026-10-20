@@ -6,7 +6,7 @@ Code: `KeepersCore/Sources/KeepersCore/` — `Analyzer.swift` (measurement), `Sc
 
 ## Analysis
 
-Every photo is decoded once at 2048 px on the long edge. RAW files use the camera's embedded preview (about 0.3 s instead of about 9 s for a full RAW develop); a RAW+JPEG pair decodes the JPEG.
+Every photo is decoded once at 2048 px on the long edge. RAW files use the camera's embedded preview (about 0.3 s instead of about 9 s for a full RAW develop); a RAW+JPEG pair decodes the JPEG. When the embedded preview is smaller than 2048 px (Olympus DNG embeds 1024 px), the RAW is also developed at 2048 px (about 1 s) and focus energy is measured on that, because it depends on resolution. Everything else stays on the camera's preview, whose color is the camera's own (macOS develops some RAWs with a strong cast).
 
 | Measurement | How |
 |---|---|
@@ -17,7 +17,7 @@ Every photo is decoded once at 2048 px on the long edge. RAW files use the camer
 | Camera focus point | The autofocus point(s) used, from ImageIO's `AFInfo` (Nikon NEF and some Olympus ORF files in testing; other cameras' maker notes aren't exposed by macOS). The subject becomes 3× the point's size around it. |
 | Exposure compensation | EXIF exposure bias, for brackets. |
 | Focus energy | Gaussian-smoothed Laplacian, variance per tile, 90th-percentile tile (see below). Measured on the eye band of each subject face, else on the subject, and on the whole frame. |
-| Exposure | Fraction of pixels with any channel ≥ 250 (blown), fraction ≤ 8 (black), mean luminance of the subject. |
+| Exposure | Fraction of pixels with every channel ≥ 250 (blown: pure white, so a saturated blue sky doesn't count), fraction ≤ 8 (black), mean luminance of the subject. |
 | Aesthetics | macOS 15+: Vision `CalculateImageAestheticsScoresRequest`, `overallScore` mapped from −1…1 to 0…1. |
 | Similarity | Vision image feature print, compared by cosine distance. |
 | Capture time | EXIF `DateTimeOriginal` + `SubsecTimeOriginal`; file date if missing. |
@@ -98,7 +98,7 @@ Photos are sorted by capture time. Each photo joins the previous one's group whe
 
 ### Full-resolution check
 
-Analysis runs on 2048 px images, where a slightly missed focus can look sharp. After analysis, the top three frames of every multi-frame group are measured again on the largest available image: the camera's embedded preview (full size for NEF, 3200 px for ORF) or the JPEG of a RAW+JPEG pair. The eye band (or subject) is cropped and measured without downscaling. The result is only compared within the group, as `0.3 × detail / sharpest detail in the group` added to the rank. The winner gets the reason "Sharpest of its group at full resolution".
+Analysis runs on 2048 px images, where a slightly missed focus can look sharp. After analysis, the top three frames of every multi-frame group are measured again on the largest available image: the camera's embedded preview (full size for NEF, 3200 px for ORF), the developed RAW when the preview is no larger than 2048 px (Olympus DNG), or the JPEG of a RAW+JPEG pair. The eye band (or subject) is cropped and measured without downscaling. The result is only compared within the group, as `0.3 × detail / sharpest detail in the group` added to the rank. The winner gets the reason "Sharpest of its group at full resolution".
 
 ## Folders
 

@@ -35,12 +35,23 @@ public enum ImageDecoder {
     /// Prefers the embedded preview (RAW files carry a camera-rendered JPEG):
     /// on an ORF that is ~0.3 s instead of ~9 s for a full RAW develop. Falls
     /// back to a full decode when the embedded preview is too small to judge.
-    public static func decode(_ url: URL, maxPixelSize: Int) throws -> DecodedImage {
+    ///
+    /// With `exactSize`, the result is `maxPixelSize` (or the original's size,
+    /// if smaller) even when that means developing the RAW: measurements like
+    /// focus energy depend on resolution, and some cameras embed only a
+    /// 1024 px preview (Olympus DNG). About 1 s per photo when it happens.
+    public static func decode(_ url: URL, maxPixelSize: Int, exactSize: Bool = false) throws -> DecodedImage {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else {
             throw Failure.unreadable(url)
         }
+        var needed = min(maxPixelSize, 1024)
+        if exactSize {
+            let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
+            let full = max(props?[kCGImagePropertyPixelWidth] as? Int ?? 0, props?[kCGImagePropertyPixelHeight] as? Int ?? 0)
+            needed = full > 0 ? min(maxPixelSize, full) : maxPixelSize
+        }
         var image = thumbnail(source, maxPixelSize: maxPixelSize, forceFullDecode: false)
-        if let preview = image, max(preview.width, preview.height) < min(maxPixelSize, 1024) {
+        if let preview = image, max(preview.width, preview.height) < needed {
             image = thumbnail(source, maxPixelSize: maxPixelSize, forceFullDecode: true) ?? preview
         }
         guard let image else { throw Failure.unreadable(url) }

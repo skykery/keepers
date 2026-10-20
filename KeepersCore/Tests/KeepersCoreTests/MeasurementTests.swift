@@ -77,6 +77,21 @@ final class MeasurementTests: XCTestCase {
         XCTAssertEqual(Scorer.exposureScore(white), 0, accuracy: 1e-9)
     }
 
+    /// A deep blue sky maxes out the blue channel only; that's color, not
+    /// blown highlights (Nyhavn frames read 20% "blown" before).
+    func testSaturatedColorIsNotBlown() {
+        let w = 64, h = 64
+        let pixels = [UInt8](repeating: 0, count: w * h * 4).enumerated().map { i, _ -> UInt8 in
+            [150, 200, 255, 255][i % 4]
+        }
+        let sky = CGImage(width: w, height: h, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: w * 4,
+                          space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                          bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
+                          provider: CGDataProvider(data: Data(pixels) as CFData)!, decode: nil,
+                          shouldInterpolate: false, intent: .defaultIntent)!
+        XCTAssertEqual(PixelMetrics.exposure(PixelBuffer(sky)!, subject: .full).highlightClip, 0)
+    }
+
     func testNormRectConversions() {
         let r = NormRect(bottomLeft: CGRect(x: 0.1, y: 0.2, width: 0.3, height: 0.4))
         XCTAssertEqual(r.y, 0.4, accuracy: 1e-9)

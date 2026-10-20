@@ -6,6 +6,8 @@ Keepers is a native Mac app that ranks every photo in a folder with Apple's on-d
 
 Built for photographers who come back from a shoot with 400 frames and need to find the 20 worth showing.
 
+![Keepers showing the Review folder of a city walk: a grid of photos with their scores, and a sidebar explaining why the selected frame is #2 of 4 similar shots](docs/images/review.jpg)
+
 - **100% local.** Nothing uploads, nothing downloads. Your photos never leave your Mac.
 - **One universal app** for Apple Silicon and Intel, about 3 MB. No Python, no model downloads.
 - **RAW-aware**: ORF, NEF, DNG, CR2, CR3, ARW, RW2, RAF, plus JPG/HEIC/PNG/WebP/TIFF/BMP/GIF. RAW+JPEG pairs count as one photo.
@@ -37,6 +39,19 @@ Trash/       — out of focus, blown out, or black; plus weaker duplicates of a 
 Each folder contains symlinks back to the originals. Drag one out (to Lightroom, iCloud, a thumb drive) and macOS gives you the real file, not the shortcut. The links are relative, so they keep working if you move or rename the shoot folder or the drive it's on.
 
 Changing the preset later re-sorts instantly, with no re-analysis. Photos you moved by hand stay where you put them.
+
+## A typical cull
+
+1. **Start with Top Picks.** These are the frames Keepers would show. Select one and press `Return` for the sidebar: the quality score, its three parts, and *why* it landed there ("Best of 4 similar shots", "Sharpest of its group at full resolution").
+2. **Check the close calls.** A badge like `2/4` means the photo is one of four similar shots. Press `C` to see the whole group side by side, then `Z` to zoom all of them to 100% on the same spot. Pick the one you like with `←` `→` and press `P`.
+
+   ![Compare view: four frames of the same church zoomed to 100% on the same gable, each labelled with its rank, folder and score](docs/images/compare.jpg)
+
+3. **Skim Review.** Everything that's usable but not a pick. Promote what you like with `P`, send the rest to Trash with `X`. Similar shots stay next to each other, best first.
+4. **Glance at Trash.** Each photo says why it's there (out of focus, blown out, or a weaker duplicate of a better frame). Rescue anything with `R` or `P`. `⌘Z` undoes any move.
+5. **Hand off.** Write ratings to XMP sidecars for Lightroom or Capture One, export the picks, or drag them straight out of the `Top Picks` folder. When you're sure, move Trash's originals to the Finder Trash.
+
+Keepers learns from your moves: Keepers → Learn From My Choices… shows how often it agrees with you and can tune the scoring to match.
 
 ## Working with other apps
 

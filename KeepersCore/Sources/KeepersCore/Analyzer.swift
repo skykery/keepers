@@ -25,11 +25,24 @@ public struct Analyzer {
         let date = decoded.captureDate ?? Self.fileDate(photo.primary)
         // A RAW+JPEG pair: shooting details come from the RAW.
         let metadata = photo.decodeURL == photo.primary ? decoded.metadata : ImageDecoder.metadata(photo.primary)
-        return try analyze(decoded.image, captureDate: date, metadata: metadata)
+        // Focus energy depends on resolution and is calibrated at the working
+        // size. When the embedded preview is smaller (Olympus DNG: 1024 px),
+        // focus is measured on the RAW developed at the working size, while
+        // color, faces, and aesthetics stay on the camera's own rendering
+        // (macOS can develop some RAWs with a strong color cast).
+        var focusImage: CGImage?
+        if max(decoded.image.width, decoded.image.height) < Self.workingSize {
+            let exact = try ImageDecoder.decode(photo.decodeURL, maxPixelSize: Self.workingSize, exactSize: true).image
+            if max(exact.width, exact.height) > max(decoded.image.width, decoded.image.height) { focusImage = exact }
+        }
+        return try analyze(decoded.image, focusImage: focusImage, captureDate: date, metadata: metadata)
     }
 
-    public func analyze(_ image: CGImage, captureDate: Date, metadata: CaptureMetadata = CaptureMetadata()) throws -> PhotoAnalysis {
+    /// `focusImage`: the same frame at a higher resolution, for focus energy only.
+    public func analyze(_ image: CGImage, focusImage: CGImage? = nil, captureDate: Date,
+                        metadata: CaptureMetadata = CaptureMetadata()) throws -> PhotoAnalysis {
         guard let px = PixelBuffer(image) else { throw ImageDecoder.Failure.unreadable(URL(fileURLWithPath: "/")) }
+        let focusPx = focusImage.flatMap(PixelBuffer.init) ?? px
 
         let quality = VNDetectFaceCaptureQualityRequest()
         let saliency = VNGenerateAttentionBasedSaliencyImageRequest()
@@ -59,7 +72,7 @@ public struct Analyzer {
             faces.append(PhotoAnalysis.Face(
                 rect: rect,
                 quality: obs.faceCaptureQuality.map(Double.init),
-                focus: PixelMetrics.focusEnergy(px, in: rect.eyeBand, maxSide: Self.eyeBandSide),
+                focus: PixelMetrics.focusEnergy(focusPx, in: rect.eyeBand, maxSide: Self.eyeBandSide),
                 smiling: matched?.smiling,
                 eyesClosed: matched?.eyesClosed,
                 mouth: mouths[safe: i] ?? nil,
@@ -80,10 +93,10 @@ public struct Analyzer {
             // Where the camera focused: the photographer's own choice of subject.
             subject = NormRect(x: point.midX - max(point.width, 0.04) * 1.5, y: point.midY - max(point.height, 0.05) * 1.5,
                                width: max(point.width, 0.04) * 3, height: max(point.height, 0.05) * 3).clamped()
-            subjectFocus = PixelMetrics.focusEnergy(px, in: subject)
+            subjectFocus = PixelMetrics.focusEnergy(focusPx, in: subject)
         } else if let pet = Self.petSubject(handler: handler, animals: animals) {
             subject = pet
-            subjectFocus = PixelMetrics.focusEnergy(px, in: pet, maxSide: Self.eyeBandSide * 2)
+            subjectFocus = PixelMetrics.focusEnergy(focusPx, in: pet, maxSide: Self.eyeBandSide * 2)
         } else {
             let salient = (saliency.results?.first?.salientObjects ?? []).map { NormRect(bottomLeft: $0.boundingBox) }
             if let first = salient.first {
@@ -91,7 +104,7 @@ public struct Analyzer {
             } else {
                 subject = NormRect(x: 0.15, y: 0.15, width: 0.7, height: 0.7)
             }
-            subjectFocus = PixelMetrics.focusEnergy(px, in: subject)
+            subjectFocus = PixelMetrics.focusEnergy(focusPx, in: subject)
         }
 
         // Aesthetics.
@@ -117,7 +130,7 @@ public struct Analyzer {
             pixelHeight: image.height,
             subject: subject,
             subjectFocus: subjectFocus,
-            globalFocus: PixelMetrics.focusEnergy(px),
+            globalFocus: PixelMetrics.focusEnergy(focusPx),
             exposure: PixelMetrics.exposure(px, subject: subject),
             aesthetics: aesthetics,
             isUtility: isUtility,
@@ -185,9 +198,14 @@ public struct Analyzer {
 
     /// Focus energy at full detail for burst ranking: the primary face's eye
     /// band (or the subject) cropped from the largest available image and
-    /// measured without downscaling.
+    /// measured without downscaling. When the embedded preview is no larger
+    /// than the analysis image (Olympus DNG: 1024 px), the RAW is developed.
     public func detailFocus(_ photo: Photo, analysis: PhotoAnalysis) throws -> Double {
-        let large = try ImageDecoder.decodeLarge(photo.decodeURL, full: false)
+        var large = try ImageDecoder.decodeLarge(photo.decodeURL, full: false)
+        if max(large.image.width, large.image.height) <= Self.workingSize,
+           max(large.nativeSize.width, large.nativeSize.height) > CGFloat(Self.workingSize) {
+            large = try ImageDecoder.decodeLarge(photo.decodeURL, full: true)
+        }
         let region = (analysis.primaryFace?.rect.eyeBand ?? analysis.subject).clamped()
         let w = Double(large.image.width), h = Double(large.image.height)
         let crop = CGRect(x: region.x * w, y: region.y * h, width: region.width * w, height: region.height * h).integral

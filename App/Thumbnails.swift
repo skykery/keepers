@@ -22,13 +22,14 @@ final class ImageCache: @unchecked Sendable {
         cache.object(forKey: Self.key(photo, size) as NSString)?.image
     }
 
-    func image(for photo: Photo, size: Int) async -> CGImage? {
-        let key = Self.key(photo, size)
+    /// `exactSize`: see `ImageDecoder.decode`; for measurements.
+    func image(for photo: Photo, size: Int, exactSize: Bool = false) async -> CGImage? {
+        let key = Self.key(photo, size) + (exactSize ? "#exact" : "")
         if let hit = cache.object(forKey: key as NSString) { return hit.image }
         return await withCheckedContinuation { continuation in
             queue.async {
                 let key = key as NSString
-                let image = try? ImageDecoder.decode(photo.decodeURL, maxPixelSize: size).image
+                let image = try? ImageDecoder.decode(photo.decodeURL, maxPixelSize: size, exactSize: exactSize).image
                 if let image {
                     self.cache.setObject(CGImageBox(image), forKey: key, cost: image.bytesPerRow * image.height)
                 }
@@ -75,7 +76,7 @@ final class ImageCache: @unchecked Sendable {
     func focusMap(for photo: Photo) async -> PixelMetrics.FocusMap? {
         let key = photo.decodeURL.path
         if let hit = maps.object(forKey: key as NSString) { return hit.value }
-        guard let image = await image(for: photo, size: Analyzer.workingSize) else { return nil }
+        guard let image = await image(for: photo, size: Analyzer.workingSize, exactSize: true) else { return nil }
         return await withCheckedContinuation { continuation in
             queue.async {
                 let map = PixelBuffer(image).map { PixelMetrics.focusMap($0) }

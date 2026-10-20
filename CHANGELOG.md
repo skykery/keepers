@@ -17,6 +17,18 @@ step for that.
 
 ### Fixed
 
+- A deep blue sky no longer counts as blown highlights. Only pure white
+  (every channel near 255) does; before, frames with a saturated sky could
+  get an exposure score of 0 and land in Trash.
+- Sharpness on cameras that embed a small preview (Olympus DNG: 1024 px).
+  Focus is now measured on the RAW developed at 2048 px, so soft frames no
+  longer score as sharp as crisp ones; the full-resolution burst check
+  develops the RAW too. Color, faces, and aesthetics still use the camera's
+  own preview.
+- The focus overlay (`F`) no longer runs past the photo's right and bottom
+  edges.
+- Folders are re-analyzed once to apply these fixes.
+
 ## [2.3.0] - 2026-10-16
 
 ### Added
